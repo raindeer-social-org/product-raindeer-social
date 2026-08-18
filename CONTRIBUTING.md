@@ -43,12 +43,12 @@ people don't duplicate work.
 **2. Sync and branch**
 
 ```bash
-git checkout dev
-git pull origin dev          # or `upstream dev` if you're working from a fork
+git checkout main
+git pull origin main          # or `upstream main` if you're working from a fork
 git checkout -b feature/issue-N-slug   # copy the exact name from the issue's "Branch" field
 ```
 
-Always branch from `dev`, never from `main` — see [§1](#1-branch-strategy).
+Always branch from `main` — see [§1](#1-branch-strategy).
 
 **3. Do the work**
 
@@ -96,7 +96,7 @@ points at your fork, not this repo.)
 **7. Open the PR**
 
 ```bash
-gh pr create --base dev --title "feat(api): add Brand CRUD endpoints" --web
+gh pr create --base main --title "feat(api): add Brand CRUD endpoints" --web
 ```
 
 `--web` opens the PR in your browser pre-filled with the template so you
@@ -104,13 +104,13 @@ can fill it in there — or drop `--web` and pass `--body-file` with a
 completed copy of the template. Either way works; so does just using the
 GitHub UI's "Compare & pull request" button.
 
-Target `dev`, not `main`. Fill out every section of the PR template — don't
-leave `Closes #N` blank (the bot will fill it in from your branch name if
-you forget, but don't rely on that). See [§2](#2-opening-a-pull-request).
+Fill out every section of the PR template — don't leave `Closes #N` blank
+(the bot will fill it in from your branch name if you forget, but don't
+rely on that). See [§2](#2-opening-a-pull-request).
 
 **8. Automated checks run**
 
-Three checks fire automatically on open (§7):
+Checks fire automatically on open (§7):
 - `backend-ci` / `frontend-ci` — the same test commands from step 4, now
   running in CI.
 - `issue-pr-sync` — validates your branch name matches `feature/issue-N-slug`
@@ -132,41 +132,29 @@ blocked while any conversation is unresolved (§5).
 **10. Merge**
 
 The merge button only unlocks once every branch protection rule is
-satisfied (§5): required approvals in, CI green, branch up to date with
-`dev`, all conversations resolved. Once merged:
+satisfied (§5): 2 approvals in, CI green, branch up to date with `main`,
+all conversations resolved. Once merged:
 - `issue-pr-sync` comments on the issue and relabels it `status:done`.
-- The issue **auto-closes** — this repo's default branch is `dev`, and
-  GitHub auto-closes a `Closes #N` issue the moment its PR merges into the
-  default branch (not into `main` — that distinction matters here since
-  `main` only receives batched releases from `dev`, not individual feature
-  PRs).
+- The issue **auto-closes** via GitHub's native `Closes #N` handling, since
+  `main` is this repo's only branch and its default branch.
 
 **11. Clean up**
 
 ```bash
-git checkout dev
-git pull origin dev
+git checkout main
+git pull origin main
 git branch -d feature/issue-N-slug
 git push origin --delete feature/issue-N-slug   # if you didn't check "delete branch" on GitHub
 ```
 
-**12. Releasing `dev` → `main`**
-
-Not part of a contributor's regular loop — a maintainer periodically opens
-a `dev → main` PR to cut a release, once `dev` is in a known-good state.
-That PR needs 2 approvals (§5) and doesn't reference `Closes #N` (those
-issues already closed in step 10).
-
 ## 1. Branch strategy
 
 ```
-main   ← protected, production. Only accepts PRs from dev.
-dev    ← protected, integration branch. Only accepts PRs from feature/*.
-feature/issue-N-slug  ← one branch per issue, always branched off dev.
+main   ← protected, production. All work lands here directly.
+feature/issue-N-slug  ← one branch per issue, always branched off main.
 ```
 
-- Never commit directly to `main` or `dev`.
-- Always branch off `dev`, not `main`.
+- Never commit directly to `main`.
 - One branch per issue. Name it `feature/issue-N-slug`, where `N` is the
   GitHub issue number and `slug` is a short, lowercase, hyphenated
   description of the work.
@@ -181,10 +169,15 @@ feature/issue-N-slug  ← one branch per issue, always branched off dev.
   issue type is captured in the issue's label, not the branch prefix. This
   keeps the convention to one rule instead of three.
 
+One branch, `main`, keeps this simple while the team is small — no
+integration branch to keep in sync, no release-cut step. If the team grows
+enough that batching work behind an integration branch becomes worth the
+extra process, that's a deliberate future change to this doc, not a default.
+
 ## 2. Opening a pull request
 
-1. Push your `feature/issue-N-slug` branch and open a PR **targeting `dev`**
-   (not `main` — `main` only ever receives PRs from `dev`).
+1. Push your `feature/issue-N-slug` branch and open a PR **targeting
+   `main`**.
 2. Fill out the PR template completely. It's created automatically from
    [`.github/PULL_REQUEST_TEMPLATE.md`](./.github/PULL_REQUEST_TEMPLATE.md)
    — don't delete sections, and don't leave `Closes #` blank.
@@ -256,25 +249,19 @@ the frontend job and vice versa.
 
 ## 5. Review and merge rules
 
-Enforced by branch protection, not just convention:
+Enforced by branch protection, not just convention, on `main`:
 
-| Branch | Approvals required | Other requirements |
-|--------|--------------------|--------------------|
-| `main` | 2 | Green CI, branch up to date, all conversations resolved, no force-push, no direct pushes |
-| `dev`  | 1 | Same as above |
+- **2 approvals required.**
+- Green CI required — this includes the `issue-pr-sync` check, so a PR
+  from a wrongly-named branch cannot merge until the branch is renamed.
+- Branch must be up to date with `main` before merge — if `main` has moved
+  since you branched, update your branch (merge or rebase `main` into it)
+  first; "up to date" is enforced, not optional.
+- All review conversations must be resolved.
+- No force-pushes, no direct pushes to `main`.
 
-`dev` is this repo's default branch — `main` only moves via a periodic
-`dev → main` release PR (§0, step 12), not individual feature PRs.
-
-- A PR cannot merge with red CI, regardless of approvals. This includes the
-  `issue-pr-sync` check — a PR from a wrongly-named branch cannot merge
-  until the branch is renamed.
-- A PR cannot merge with unresolved review conversations.
-- If `dev` has moved since you branched, update your branch (merge or
-  rebase `dev` into your branch) before merge — "up to date" is enforced,
-  not optional.
-- Don't approve your own PR, and don't merge on your own approval unless
-  you're unblocking something urgent and have said so explicitly in the PR.
+Don't approve your own PR, and don't merge on your own approval unless
+you're unblocking something urgent and have said so explicitly in the PR.
 
 ## 6. Issues
 

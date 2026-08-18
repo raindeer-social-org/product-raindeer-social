@@ -18,4 +18,4 @@ Closes #
 - [ ] Migration included if the schema changed (`alembic revision --autogenerate`)
 - [ ] No secrets, API keys, or `.env` values committed
 - [ ] Docs/README updated if behavior or setup changed
-- [ ] I branched from `dev` and am targeting `dev` (not `main`)
+- [ ] I branched from `main` and am targeting `main`
