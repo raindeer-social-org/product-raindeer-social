@@ -138,7 +138,7 @@ blocked while any conversation is unresolved (§5).
 **10. Merge**
 
 The merge button only unlocks once every branch protection rule is
-satisfied (§5): 2 approvals in, CI green, branch up to date with `main`,
+satisfied (§5): 1 approval in, CI green, branch up to date with `main`,
 all conversations resolved. Once merged:
 - `issue-pr-sync` comments on the issue and relabels it `status:done`.
 - The issue **auto-closes** via GitHub's native `Closes #N` handling, since
@@ -257,7 +257,9 @@ the frontend job and vice versa.
 
 Enforced by branch protection, not just convention, on `main`:
 
-- **2 approvals required.**
+- **1 approval required, from someone other than the PR author.** (GitHub
+  blocks self-approval by default, so this isn't something you have to
+  self-police.)
 - Green CI required — this includes the `issue-pr-sync` check, so a PR
   from a wrongly-named branch cannot merge until the branch is renamed.
 - Branch must be up to date with `main` before merge — if `main` has moved
