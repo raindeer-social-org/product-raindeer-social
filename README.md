@@ -39,8 +39,8 @@ Docker Compose for local dev.
 ### 1. Clone and create a virtualenv
 
 ```bash
-git clone https://github.com/raindeer-social-org/raindeer-social.git
-cd raindeer-social
+git clone https://github.com/raindeer-social-org/product-raindeer-social.git
+cd product-raindeer-social
 python3.11 -m venv .venv
 source .venv/bin/activate
 python --version   # should print 3.11.x
