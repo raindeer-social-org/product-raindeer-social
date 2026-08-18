@@ -1,0 +1,63 @@
+# --- Environment & secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Python (apps/api, packages/agents) ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+dist/
+build/
+.ipynb_checkpoints/
+
+# --- Node / Next.js (apps/web) ---
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Docker ---
+docker-compose.override.yml
+
+# --- Databases / local data ---
+*.sqlite3
+*.db
+pgdata/
+
+# --- Logs ---
+*.log
+logs/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Misc ---
+.cache/
+tmp/
+*.tmp

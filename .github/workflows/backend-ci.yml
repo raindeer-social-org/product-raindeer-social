@@ -1,0 +1,41 @@
+name: backend-ci
+on:
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: raindeer_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+      # 1. Checkout code
+      - uses: actions/checkout@v4
+
+      # 2. Set up Python
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      # 3. Install dependencies
+      - run: pip install -r apps/api/requirements.txt
+
+      # 4. (Postgres service above is already up and healthy by this point)
+
+      # 5. Run migrations against the test database
+      - run: alembic upgrade head
+        env: { DATABASE_URL: postgresql://postgres:postgres@localhost:5432/raindeer_test }
+
+      # 6. Run the test suite with coverage
+      - run: pytest apps/api/tests -v --cov=apps/api --cov=packages --cov-report=term-missing --cov-fail-under=70
+        env: { DATABASE_URL: postgresql://postgres:postgres@localhost:5432/raindeer_test }
+
+      # 7. --cov-fail-under=70 above is what turns "ran tests" into "fails the build if undertested"
+      # 8. GitHub Actions reports this job's pass/fail back to the PR automatically — no extra step needed

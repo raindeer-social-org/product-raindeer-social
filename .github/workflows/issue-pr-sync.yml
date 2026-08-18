@@ -1,0 +1,98 @@
+name: issue-pr-sync
+
+# Enforces the feature/issue-N-slug branch convention and keeps the linked
+# issue in sync with PR state: opening a PR comments on the issue and moves
+# it to status:in-progress, merging moves it to status:done (GitHub itself
+# closes the issue via the "Closes #N" line), closing without merging moves
+# it back to status:needs-triage.
+
+on:
+  pull_request:
+    types: [opened, reopened, edited, closed]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate branch name and sync issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = context.payload.pull_request.head.ref;
+            const pattern = /^feature\/issue-(\d+)-[a-z0-9-]+$/;
+            const match = branch.match(pattern);
+
+            if (!match) {
+              core.setFailed(
+                `Branch "${branch}" doesn't follow the required convention ` +
+                `feature/issue-N-slug (e.g. feature/issue-42-onboarding-flow). ` +
+                `Rename the branch and re-push.`
+              );
+              return;
+            }
+
+            const issueNumber = Number(match[1]);
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+
+            // Confirm the referenced issue actually exists before touching it.
+            try {
+              await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+            } catch (e) {
+              core.setFailed(`Branch references issue #${issueNumber}, but that issue was not found.`);
+              return;
+            }
+
+            const closesLine = `Closes #${issueNumber}`;
+            const hasCloses = new RegExp(`closes\\s+#${issueNumber}\\b`, 'i').test(pr.body || '');
+
+            // Auto-inject "Closes #N" into the PR body if the author left it blank.
+            if (!hasCloses && context.payload.action !== 'closed') {
+              const newBody = pr.body
+                ? pr.body.replace(/^## Linked issue\s*\n.*$/m, `## Linked issue\n${closesLine}`)
+                : `## Linked issue\n${closesLine}\n`;
+              const body = newBody.includes(closesLine) ? newBody : `${closesLine}\n\n${pr.body || ''}`;
+              await github.rest.pulls.update({ owner, repo, pull_number: pr.number, body });
+            }
+
+            const addLabel = async (label) => {
+              await github.rest.issues.addLabels({ owner, repo, issue_number: issueNumber, labels: [label] });
+            };
+            const removeLabel = async (label) => {
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: issueNumber, name: label });
+              } catch (e) { /* label wasn't present — nothing to remove */ }
+            };
+
+            if (context.payload.action === 'opened' || context.payload.action === 'reopened') {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: issueNumber,
+                body: `🔗 PR #${pr.number} (\`${branch}\`) opened by @${pr.user.login}: ${pr.html_url}`,
+              });
+              await removeLabel('status:needs-triage');
+              await addLabel('status:in-progress');
+              await github.rest.issues.addAssignees({ owner, repo, issue_number: issueNumber, assignees: [pr.user.login] });
+            }
+
+            if (context.payload.action === 'closed' && pr.merged) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: issueNumber,
+                body: `✅ Resolved by PR #${pr.number}, merged into \`${pr.base.ref}\`.`,
+              });
+              await removeLabel('status:in-progress');
+              await addLabel('status:done');
+            }
+
+            if (context.payload.action === 'closed' && !pr.merged) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: issueNumber,
+                body: `↩️ PR #${pr.number} was closed without merging. Moving this issue back to the backlog.`,
+              });
+              await removeLabel('status:in-progress');
+              await addLabel('status:needs-triage');
+            }
