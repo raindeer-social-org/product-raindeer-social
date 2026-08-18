@@ -316,6 +316,29 @@ You don't need to touch labels or comment on the issue yourself — just get
 the branch name and `Closes #N` right (or let the bot fill in `Closes #N`
 for you) and the rest follows.
 
+### If a required check ever shows "Expected — waiting for status to be reported"
+
+This means GitHub is waiting for a check run against your PR's *current*
+commit that isn't coming — usually because the check ran once on an older
+commit and nothing re-triggered it for the latest one. It's not something
+to wait out; it will sit there forever until something fires a new event
+GitHub Actions listens for. To recover, do any one of these:
+
+- **Push a new commit** — an empty one works: `git commit --allow-empty -m "chore: retrigger checks" && git push`.
+- **Edit the PR title or description** — even a trivial change (GitHub
+  ignores true no-op edits, so change something real, e.g. add a comment
+  line) fires `pull_request.edited`, which every required check here
+  listens for.
+- **Use GitHub's "Update branch" button** on the PR — merges the base
+  branch in, which is a real new commit.
+
+If it happens repeatedly rather than as a one-off, the workflow's
+`on.pull_request.types` list is almost certainly missing an event it needs
+(this happened once already — `issue-pr-sync` was missing `synchronize`,
+so any PR that got a follow-up commit after opening got stuck exactly like
+this). Check `.github/workflows/*.yml`'s trigger types before assuming
+it's a one-off fluke.
+
 ## Questions
 
 If any of this is unclear or you hit a case it doesn't cover, ask in the
