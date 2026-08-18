@@ -10,26 +10,31 @@ review.
 This section is the full path, start to finish. Sections 1–7 below cover
 each topic in more depth — this is the sequence that ties them together.
 
-**0. One-time setup**
+**0. One-time setup — fork first, always**
 
-- **Org member (write access to this repo):** clone directly.
-  ```bash
-  git clone https://github.com/raindeer-social-org/product-raindeer-social.git
-  cd product-raindeer-social
-  ```
-- **External contributor (no write access):** fork first, then clone your
-  fork and add this repo as `upstream` so you can pull in new work.
-  ```bash
-  gh repo fork raindeer-social-org/product-raindeer-social --clone
-  cd product-raindeer-social
-  git remote add upstream https://github.com/raindeer-social-org/product-raindeer-social.git
-  ```
-  (If you don't use `gh`, fork via the GitHub UI's "Fork" button, then
-  `git clone` your fork and add the `upstream` remote by hand.)
+Everyone contributes through a fork — there is no "clone the repo directly
+and push a branch" path, even for maintainers. Only repo admins merge; no
+one pushes branches straight into `product-raindeer-social`.
 
-  Either way, finish the environment setup in the [README's Getting
-  Started section](./README.md#getting-started) — Python 3.11, Postgres +
-  pgvector, `.env` from `.env.example` — before continuing.
+```bash
+gh repo fork raindeer-social-org/product-raindeer-social --clone
+cd product-raindeer-social
+git remote add upstream https://github.com/raindeer-social-org/product-raindeer-social.git
+```
+
+(If you don't use `gh`, fork via the GitHub UI's "Fork" button, then
+`git clone` your fork and add the `upstream` remote by hand.)
+
+Finish the environment setup in the [README's Getting Started
+section](./README.md#getting-started) — Python 3.11, Postgres + pgvector,
+`.env` from `.env.example` — before continuing.
+
+This is enforced two ways: everyone except repo admins holds read-only
+access to `product-raindeer-social` itself, so pushing a branch directly
+simply isn't possible for them. Repo admins retain push/merge rights (they
+need it to manage the repo and merge approved PRs) but follow the same
+fork-first flow by convention rather than by technical block — don't push
+feature branches directly just because you technically can.
 
 **1. Pick an issue**
 
@@ -44,7 +49,7 @@ people don't duplicate work.
 
 ```bash
 git checkout main
-git pull origin main          # or `upstream main` if you're working from a fork
+git pull upstream main
 git checkout -b feature/issue-N-slug   # copy the exact name from the issue's "Branch" field
 ```
 
@@ -90,13 +95,14 @@ don't squash "wip" + "fix review comments" into one blob at the end.
 git push -u origin feature/issue-N-slug
 ```
 
-(Pushes to *your* fork if you're an external contributor — `origin` there
-points at your fork, not this repo.)
+This pushes to *your fork* (`origin`) — never to `product-raindeer-social`
+directly.
 
 **7. Open the PR**
 
 ```bash
-gh pr create --base main --title "feat(api): add Brand CRUD endpoints" --web
+gh pr create --repo raindeer-social-org/product-raindeer-social \
+  --base main --title "feat(api): add Brand CRUD endpoints" --web
 ```
 
 `--web` opens the PR in your browser pre-filled with the template so you
@@ -132,7 +138,7 @@ blocked while any conversation is unresolved (§5).
 **10. Merge**
 
 The merge button only unlocks once every branch protection rule is
-satisfied (§5): 2 approvals in, CI green, branch up to date with `main`,
+satisfied (§5): 1 approval in, CI green, branch up to date with `main`,
 all conversations resolved. Once merged:
 - `issue-pr-sync` comments on the issue and relabels it `status:done`.
 - The issue **auto-closes** via GitHub's native `Closes #N` handling, since
@@ -142,7 +148,7 @@ all conversations resolved. Once merged:
 
 ```bash
 git checkout main
-git pull origin main
+git pull upstream main
 git branch -d feature/issue-N-slug
 git push origin --delete feature/issue-N-slug   # if you didn't check "delete branch" on GitHub
 ```
@@ -251,7 +257,9 @@ the frontend job and vice versa.
 
 Enforced by branch protection, not just convention, on `main`:
 
-- **2 approvals required.**
+- **1 approval required, from someone other than the PR author.** (GitHub
+  blocks self-approval by default, so this isn't something you have to
+  self-police.)
 - Green CI required — this includes the `issue-pr-sync` check, so a PR
   from a wrongly-named branch cannot merge until the branch is renamed.
 - Branch must be up to date with `main` before merge — if `main` has moved
