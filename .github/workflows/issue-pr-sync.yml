@@ -8,7 +8,7 @@ name: issue-pr-sync
 
 on:
   pull_request:
-    types: [opened, reopened, edited, closed]
+    types: [opened, reopened, edited, synchronize, closed]
 
 permissions:
   contents: write
