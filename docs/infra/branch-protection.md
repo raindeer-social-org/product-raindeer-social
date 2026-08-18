@@ -13,7 +13,7 @@ there's no separate integration branch.
 | Rule | Value |
 |------|-------|
 | Require a pull request before merging | Yes |
-| Required approving reviews | 2 |
+| Required approving reviews | 1 (from someone other than the PR author — GitHub blocks self-approval by default) |
 | Dismiss stale approvals on new commits | Yes |
 | Require status checks to pass | Yes — `test` (backend-ci), `sync` (issue-pr-sync) |
 | Require branches to be up to date before merging | Yes |
