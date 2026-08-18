@@ -100,8 +100,9 @@ Every PR into `main` runs through GitHub Actions before it can be merged:
   issue and keeps the two in sync; see [`CONTRIBUTING.md`
   §7](./CONTRIBUTING.md#7-automated-issue-pr-sync).
 
-Branch protection on `main` enforces the rest: PRs only, 2 required
-approvals, `backend-ci` and `issue-pr-sync` must be green, branch must be
+Branch protection on `main` enforces the rest: PRs only, 1 required
+approval (from someone other than the author), `backend-ci` and
+`issue-pr-sync` must be green, branch must be
 up to date, all review conversations resolved, no direct pushes or
 force-pushes — see [`docs/infra/branch-protection.md`](./docs/infra/branch-protection.md)
 for the exact settings applied.
