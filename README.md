@@ -88,8 +88,7 @@ locally (e.g. via Homebrew services) as shown above.
 
 ## CI & branch protection
 
-Every PR into `dev` or `main` runs through GitHub Actions before it can be
-merged:
+Every PR into `main` runs through GitHub Actions before it can be merged:
 
 - **`backend-ci.yml`** — spins up Postgres (pgvector), runs Alembic
   migrations, then `pytest` with `--cov-fail-under=70`. A PR that drops
@@ -97,13 +96,15 @@ merged:
 - **`frontend-ci.yml`** — scoped to `apps/web/**`; runs `lint`, `test`, then
   `build`, in that order, so a broken or untested frontend change never
   reaches `build`.
+- **`issue-pr-sync.yml`** — validates the PR's branch name against a real
+  issue and keeps the two in sync; see [`CONTRIBUTING.md`
+  §7](./CONTRIBUTING.md#7-automated-issue-pr-sync).
 
-Branch protection enforces the rest:
-
-- **`main`** — PRs only, 2 required approvals, CI must be green, branch
-  must be up to date, no direct pushes or force-pushes.
-- **`dev`** — PRs only, 1 required approval, same CI and up-to-date
-  requirements, no direct pushes or force-pushes.
+Branch protection on `main` enforces the rest: PRs only, 2 required
+approvals, `backend-ci` and `issue-pr-sync` must be green, branch must be
+up to date, all review conversations resolved, no direct pushes or
+force-pushes — see [`docs/infra/branch-protection.md`](./docs/infra/branch-protection.md)
+for the exact settings applied.
 
 Together these make "tests pass and reviewers approved" a hard gate, not a
 convention — the merge button is unavailable until both are true.
