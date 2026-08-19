@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     openrouter_api_key: str | None = None
     tavily_api_key: str | None = None
 
+    sentry_dsn: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:
