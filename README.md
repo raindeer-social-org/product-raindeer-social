@@ -82,9 +82,27 @@ Then check `http://127.0.0.1:8000/health` — it should return
 `{"status": "ok", "environment": "development"}` with no import errors in
 the console.
 
-Database schema and migrations land in Issue #4; the `docker compose up`
-one-command stack lands in Issue #5. Until then, run Postgres/Redis
-locally (e.g. via Homebrew services) as shown above.
+### 6. Or run the whole stack with Docker Compose
+
+```bash
+docker compose up
+```
+
+Brings up Postgres (pgvector), Redis, the API (`localhost:8000`), and a
+Celery worker in one command — no local Postgres/Redis install needed.
+`apps/web` doesn't have a real Next.js app yet (that lands with the
+frontend milestone), so there's no `web` service to bring up until then.
+
+**Job runner: Celery**, not BullMQ/Node — the backend is Python-first
+(FastAPI + SQLAlchemy + LangGraph), so keeping the worker in the same
+language avoids a second runtime and lets worker code share models and
+DB session setup directly with the API instead of duplicating them.
+
+```bash
+docker compose exec worker python3 -c "from apps.api.worker import ping; print(ping.delay().get(timeout=10))"
+```
+should print `pong` — that's the worker actually consuming from Redis,
+not just a container that's "up."
 
 ## CI & branch protection
 
