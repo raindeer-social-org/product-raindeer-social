@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     openrouter_api_key: str | None = None
     tavily_api_key: str | None = None
 
+    search_provider: str = "tavily"
+    llm_provider: str = "openrouter"
+
     sentry_dsn: str | None = None
 
 
