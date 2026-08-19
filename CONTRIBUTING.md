@@ -288,6 +288,11 @@ Label with `type:*`, `area:*`, `priority:*`, and `size:*` so the backlog
 stays filterable as the issue count grows past what anyone can hold in
 their head.
 
+Visual status (Backlog → Ready → In Progress → In Review → Done) lives on
+the org's [GitHub Projects board](./docs/infra/projects-board.md) — the
+labels above are what makes the backlog filterable/searchable; the board
+is what makes it glanceable.
+
 ## 7. Automated issue-PR sync
 
 `.github/workflows/issue-pr-sync.yml` runs on every PR event and does the
