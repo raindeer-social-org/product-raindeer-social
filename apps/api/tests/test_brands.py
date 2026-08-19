@@ -1,4 +1,5 @@
 import uuid
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -232,3 +233,95 @@ def test_created_brand_actually_persists_across_connections() -> None:
             cleanup_db.commit()
         finally:
             cleanup_db.close()
+
+
+def _ok_storage_response() -> MagicMock:
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    return response
+
+
+@uses_test_session
+def test_editor_can_upload_brand_logo(db_session) -> None:
+    _org, user = _create_org_and_user(db_session, UserRole.EDITOR, "logo-editor@acme.test")
+    headers = _auth_headers(user)
+    created = client.post("/brands", json={"name": "Acme Widgets"}, headers=headers).json()
+
+    with patch("httpx.post", return_value=_ok_storage_response()) as mock_post:
+        response = client.put(
+            f"/brands/{created['id']}/logo",
+            files={"file": ("logo.png", b"fake-png-bytes", "image/png")},
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["logo_url"].endswith(f"{user.organization_id}/{created['id']}/logo")
+    # org/brand-scoped path, not the original filename — can't guess
+    # another brand's asset path from an incrementing id.
+    uploaded_path = mock_post.call_args.args[0]
+    assert f"{user.organization_id}/{created['id']}/logo" in uploaded_path
+
+
+@uses_test_session
+def test_viewer_cannot_upload_brand_logo(db_session) -> None:
+    _org, user = _create_org_and_user(db_session, UserRole.EDITOR, "logo-editor2@acme.test")
+    headers = _auth_headers(user)
+    created = client.post("/brands", json={"name": "Name"}, headers=headers).json()
+
+    _org2, viewer = _create_org_and_user(db_session, UserRole.VIEWER, "logo-viewer@acme.test")
+    viewer.organization_id = user.organization_id
+    db_session.flush()
+
+    response = client.put(
+        f"/brands/{created['id']}/logo",
+        files={"file": ("logo.png", b"data", "image/png")},
+        headers=_auth_headers(viewer),
+    )
+
+    assert response.status_code == 403
+
+
+@uses_test_session
+def test_editor_can_delete_brand_logo(db_session) -> None:
+    _org, user = _create_org_and_user(db_session, UserRole.EDITOR, "logo-editor3@acme.test")
+    headers = _auth_headers(user)
+    created = client.post("/brands", json={"name": "Name"}, headers=headers).json()
+
+    with patch("httpx.post", return_value=_ok_storage_response()):
+        client.put(
+            f"/brands/{created['id']}/logo",
+            files={"file": ("logo.png", b"data", "image/png")},
+            headers=headers,
+        )
+
+    with patch("httpx.delete", return_value=_ok_storage_response()) as mock_delete:
+        response = client.delete(f"/brands/{created['id']}/logo", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["logo_url"] is None
+    deleted_path = mock_delete.call_args.args[0]
+    assert f"{user.organization_id}/{created['id']}/logo" in deleted_path
+
+
+@uses_test_session
+def test_reuploading_logo_overwrites_same_path(db_session) -> None:
+    _org, user = _create_org_and_user(db_session, UserRole.EDITOR, "logo-editor4@acme.test")
+    headers = _auth_headers(user)
+    created = client.post("/brands", json={"name": "Name"}, headers=headers).json()
+
+    with patch("httpx.post", return_value=_ok_storage_response()) as mock_post:
+        client.put(
+            f"/brands/{created['id']}/logo",
+            files={"file": ("first.png", b"data-1", "image/png")},
+            headers=headers,
+        )
+        client.put(
+            f"/brands/{created['id']}/logo",
+            files={"file": ("second.jpg", b"data-2", "image/jpeg")},
+            headers=headers,
+        )
+
+    first_path = mock_post.call_args_list[0].args[0]
+    second_path = mock_post.call_args_list[1].args[0]
+    assert first_path == second_path

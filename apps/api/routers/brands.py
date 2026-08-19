@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from apps.api.auth.dependencies import CurrentUser, get_current_user
@@ -8,10 +8,19 @@ from apps.api.config.database import get_db
 from apps.api.middleware.rbac import require_role
 from apps.api.models import Brand, UserRole
 from apps.api.schemas.brand import BrandCreate, BrandRead, BrandUpdate
+from packages.integrations.registry import get_storage_provider
 
 router = APIRouter(prefix="/brands", tags=["brands"])
 
 WRITE_ROLES = (UserRole.OWNER, UserRole.ADMIN, UserRole.EDITOR)
+
+
+def _brand_logo_path(org_id: str, brand_id: uuid.UUID) -> str:
+    # Fixed name (no original filename/extension) so delete can always
+    # reconstruct the same path deterministically from org_id + brand_id
+    # alone, and re-upload overwrites rather than accumulating orphans.
+    # UUIDs, not incrementing ids — you can't guess another brand's path.
+    return f"{org_id}/{brand_id}/logo"
 
 
 def _get_org_brand(db: Session, brand_id: uuid.UUID, org_id: str) -> Brand:
@@ -85,3 +94,39 @@ def delete_brand(
     brand = _get_org_brand(db, brand_id, current_user.org_id)
     db.delete(brand)
     db.flush()
+
+
+@router.put("/{brand_id}/logo", response_model=BrandRead)
+def upload_brand_logo(
+    brand_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_role(*WRITE_ROLES)),
+) -> Brand:
+    brand = _get_org_brand(db, brand_id, current_user.org_id)
+    content = file.file.read()
+    path = _brand_logo_path(current_user.org_id, brand_id)
+
+    storage = get_storage_provider()
+    url = storage.upload(path, content, file.content_type or "application/octet-stream")
+
+    brand.logo_url = url
+    db.flush()
+    db.refresh(brand)
+    return brand
+
+
+@router.delete("/{brand_id}/logo", response_model=BrandRead)
+def delete_brand_logo(
+    brand_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_role(*WRITE_ROLES)),
+) -> Brand:
+    brand = _get_org_brand(db, brand_id, current_user.org_id)
+    storage = get_storage_provider()
+    storage.delete(_brand_logo_path(current_user.org_id, brand_id))
+
+    brand.logo_url = None
+    db.flush()
+    db.refresh(brand)
+    return brand
