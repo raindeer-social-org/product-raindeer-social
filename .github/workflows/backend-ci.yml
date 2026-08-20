@@ -15,6 +15,11 @@ jobs:
         ports: ["5432:5432"]
         options: >-
           --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
 
     steps:
       # 1. Checkout code
@@ -35,7 +40,9 @@ jobs:
 
       # 6. Run the test suite with coverage
       - run: pytest apps/api/tests -v --cov=apps/api --cov=packages --cov-report=term-missing --cov-fail-under=70
-        env: { DATABASE_URL: postgresql://postgres:postgres@localhost:5432/raindeer_test }
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/raindeer_test
+          REDIS_URL: redis://localhost:6379/0
 
       # 7. --cov-fail-under=70 above is what turns "ran tests" into "fails the build if undertested"
       # 8. GitHub Actions reports this job's pass/fail back to the PR automatically — no extra step needed
