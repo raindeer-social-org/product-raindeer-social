@@ -26,6 +26,7 @@ class User(Base):
         UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
     )
     email: Mapped[str] = mapped_column(nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(nullable=False)
     role: Mapped[UserRole] = mapped_column(
         Enum(UserRole, name="user_role"), nullable=False, default=UserRole.VIEWER
     )

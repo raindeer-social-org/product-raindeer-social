@@ -82,6 +82,11 @@ Then check `http://127.0.0.1:8000/health` — it should return
 `{"status": "ok", "environment": "development"}` with no import errors in
 the console.
 
+If any of steps 1–5 fail, run `./scripts/verify_dev_env.sh` — it checks
+each one (Python 3.11, dependency install, Postgres reachability, `.env`,
+API import) in order and stops at the first thing that's actually wrong,
+rather than a wall of pip/uvicorn output to dig through.
+
 ### 6. Or run the whole stack with Docker Compose
 
 ```bash

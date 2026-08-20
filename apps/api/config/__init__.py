@@ -20,6 +20,11 @@ class Settings(BaseSettings):
 
     search_provider: str = "tavily"
     llm_provider: str = "openrouter"
+    storage_provider: str = "supabase"
+
+    supabase_url: str | None = None
+    supabase_service_key: str | None = None
+    supabase_storage_bucket: str = "brand-assets"
 
     sentry_dsn: str | None = None
 
