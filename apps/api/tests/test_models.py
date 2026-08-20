@@ -9,7 +9,12 @@ def test_create_organization_user_brand(db_session) -> None:
     db_session.add(org)
     db_session.flush()
 
-    user = User(organization_id=org.id, email="owner@acme.test", role=UserRole.OWNER)
+    user = User(
+        organization_id=org.id,
+        email="owner@acme.test",
+        password_hash="not-a-real-hash",
+        role=UserRole.OWNER,
+    )
     brand = Brand(organization_id=org.id, name="Acme Widgets")
     db_session.add_all([user, brand])
     db_session.flush()
@@ -26,7 +31,9 @@ def test_user_role_defaults_to_viewer(db_session) -> None:
     db_session.add(org)
     db_session.flush()
 
-    user = User(organization_id=org.id, email="viewer@acme.test")
+    user = User(
+        organization_id=org.id, email="viewer@acme.test", password_hash="not-a-real-hash"
+    )
     db_session.add(user)
     db_session.flush()
 
@@ -38,10 +45,14 @@ def test_user_email_must_be_unique(db_session) -> None:
     db_session.add(org)
     db_session.flush()
 
-    db_session.add(User(organization_id=org.id, email="dup@acme.test"))
+    db_session.add(
+        User(organization_id=org.id, email="dup@acme.test", password_hash="hash-1")
+    )
     db_session.flush()
 
-    db_session.add(User(organization_id=org.id, email="dup@acme.test"))
+    db_session.add(
+        User(organization_id=org.id, email="dup@acme.test", password_hash="hash-2")
+    )
     with pytest.raises(IntegrityError):
         db_session.flush()
 
