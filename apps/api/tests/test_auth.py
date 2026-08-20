@@ -11,25 +11,12 @@ from apps.api.auth.jwt import (
     hash_password,
     verify_password,
 )
-from apps.api.config.database import get_db
 from apps.api.main import app
 from apps.api.middleware.rbac import require_role
 from apps.api.models import Organization, User, UserRole
 
 client = TestClient(app)
-
-
-@pytest.fixture(autouse=True)
-def _use_test_session_for_get_db(db_session):
-    # The login/me endpoints go through Depends(get_db), which by default
-    # opens a brand-new connection from the engine — a different connection
-    # than db_session's, which is deliberately isolated in an uncommitted
-    # transaction for rollback-based test cleanup. Without this override,
-    # data set up via db_session is invisible to the endpoint's own query,
-    # since it was never actually committed at the connection level.
-    app.dependency_overrides[get_db] = lambda: db_session
-    yield
-    app.dependency_overrides.pop(get_db, None)
+pytestmark = pytest.mark.usefixtures("override_get_db")
 
 
 def test_hash_and_verify_password_round_trip() -> None:
