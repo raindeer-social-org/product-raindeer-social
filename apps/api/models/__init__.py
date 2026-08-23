@@ -6,6 +6,7 @@ from apps.api.models.content_calendar_event import (
     ContentCalendarEvent,
 )
 from apps.api.models.integration_call import IntegrationCall
+from apps.api.models.onboarding_research import OnboardingResearch
 from apps.api.models.onboarding_response import OnboardingResponse
 from apps.api.models.organization import Organization
 from apps.api.models.social_account import SocialAccount, SocialAccountStatus, SocialPlatform
@@ -19,6 +20,7 @@ __all__ = [
     "CalendarEventStatus",
     "ContentCalendarEvent",
     "IntegrationCall",
+    "OnboardingResearch",
     "OnboardingResponse",
     "Organization",
     "SocialAccount",
