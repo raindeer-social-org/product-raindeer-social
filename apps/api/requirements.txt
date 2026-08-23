@@ -19,6 +19,8 @@ bcrypt==4.2.1
 python-multipart==0.0.20
 cryptography==50.0.0
 
+langgraph==1.2.11
+
 pytest==8.3.4
 pytest-cov==6.0.0
 httpx==0.28.1
