@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     search_provider: str = "tavily"
     llm_provider: str = "openrouter"
     storage_provider: str = "supabase"
+    embedding_provider: str = "openai"
 
     supabase_url: str | None = None
     supabase_service_key: str | None = None

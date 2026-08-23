@@ -9,6 +9,7 @@ from apps.api.middleware.rbac import require_role
 from apps.api.models import Brand, OnboardingResponse, UserRole
 from apps.api.schemas.brand import BrandRead
 from apps.api.schemas.onboarding import OnboardingRead, OnboardingUpsert
+from packages.agents.onboarding.embedding import embed_brand_report
 from packages.agents.onboarding.graph import run_onboarding_agent
 from packages.agents.onboarding.research_step import run_onboarding_research
 
@@ -128,7 +129,8 @@ def run_agent(
         )
 
     research = run_onboarding_research(db, brand, response)
-    # run_onboarding_agent already flushes brand.brand_report and refreshes
-    # brand itself before returning — nothing left to do here.
     run_onboarding_agent(db, brand, response, research)
+    # Re-embeds on every completion/update of brand_report — embed_brand_report
+    # replaces this brand's existing chunks rather than appending to them.
+    embed_brand_report(db, brand)
     return brand

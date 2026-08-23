@@ -186,7 +186,7 @@ def test_run_agent_runs_research_then_graph_and_returns_brand_with_report(db_ses
     }
     with patch("apps.api.routers.onboarding.run_onboarding_research") as mock_research, patch(
         "apps.api.routers.onboarding.run_onboarding_agent"
-    ) as mock_agent:
+    ) as mock_agent, patch("apps.api.routers.onboarding.embed_brand_report") as mock_embed:
         mock_agent.side_effect = lambda db, brand_arg, response_arg, research_arg: (
             setattr(brand_arg, "brand_report", report)
         )
@@ -196,6 +196,7 @@ def test_run_agent_runs_research_then_graph_and_returns_brand_with_report(db_ses
     assert response.json()["brand_report"] == report
     mock_research.assert_called_once()
     mock_agent.assert_called_once()
+    mock_embed.assert_called_once()
 
 
 @uses_test_session
