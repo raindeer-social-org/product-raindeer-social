@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -19,10 +20,13 @@ _CODE_FOR_STATUS = {
 def _error_response(
     status_code: int, code: str, message: str, details: dict | list | None = None
 ) -> JSONResponse:
-    return JSONResponse(
-        status_code=status_code,
-        content=ErrorResponse(code=code, message=message, details=details).model_dump(),
-    )
+    # jsonable_encoder, not a plain .model_dump(): a validator that raises a
+    # bare ValueError leaves that exception object sitting in
+    # errors()[i]["ctx"]["error"], which json.dumps can't serialize —
+    # jsonable_encoder converts it (and anything else non-JSON-native, like
+    # UUIDs/datetimes surfacing from `details`) safely instead of 500ing.
+    body = ErrorResponse(code=code, message=message, details=details).model_dump()
+    return JSONResponse(status_code=status_code, content=jsonable_encoder(body))
 
 
 async def http_exception_handler(
@@ -35,6 +39,21 @@ async def http_exception_handler(
     )
 
 
+def _stringify_error_ctx(errors: list[dict]) -> list[dict]:
+    # pydantic-core embeds the raised exception object itself at
+    # ctx["error"] (not its message) when a custom validator fails —
+    # replace it with its message so it survives JSON encoding intact
+    # instead of collapsing to "{}".
+    sanitized = []
+    for err in errors:
+        err = dict(err)
+        ctx = err.get("ctx")
+        if isinstance(ctx, dict) and isinstance(ctx.get("error"), Exception):
+            err["ctx"] = {**ctx, "error": str(ctx["error"])}
+        sanitized.append(err)
+    return sanitized
+
+
 async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
@@ -42,7 +61,7 @@ async def validation_exception_handler(
         status.HTTP_422_UNPROCESSABLE_ENTITY,
         code="validation_error",
         message="Request validation failed",
-        details=exc.errors(),
+        details=_stringify_error_ctx(exc.errors()),
     )
 
 
