@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -149,6 +151,65 @@ def test_cannot_edit_after_complete(db_session) -> None:
     )
 
     assert response.status_code == 409
+
+
+@uses_test_session
+def test_run_agent_requires_completed_onboarding(db_session) -> None:
+    brand, user = _setup_brand(db_session)
+    headers = _auth_headers(user)
+    client.put(f"/brands/{brand.id}/onboarding", json={"voice": "Playful"}, headers=headers)
+
+    response = client.post(f"/brands/{brand.id}/onboarding/run-agent", headers=headers)
+
+    assert response.status_code == 400
+
+
+@uses_test_session
+def test_run_agent_runs_research_then_graph_and_returns_brand_with_report(db_session) -> None:
+    brand, user = _setup_brand(db_session)
+    headers = _auth_headers(user)
+    full_payload = {
+        "voice": "Playful",
+        "audience": "Gen Z",
+        "product_catalog": {"items": ["A"]},
+        "competitors": ["X"],
+        "goals": ["Grow"],
+    }
+    client.put(f"/brands/{brand.id}/onboarding", json=full_payload, headers=headers)
+    client.post(f"/brands/{brand.id}/onboarding/complete", headers=headers)
+
+    report = {
+        "voice_and_tone": "Playful",
+        "audience": "Gen Z",
+        "product_catalog_summary": "A",
+        "competitive_positioning": "Ahead of X",
+    }
+    with patch("apps.api.routers.onboarding.run_onboarding_research") as mock_research, patch(
+        "apps.api.routers.onboarding.run_onboarding_agent"
+    ) as mock_agent:
+        mock_agent.side_effect = lambda db, brand_arg, response_arg, research_arg: (
+            setattr(brand_arg, "brand_report", report)
+        )
+        response = client.post(f"/brands/{brand.id}/onboarding/run-agent", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["brand_report"] == report
+    mock_research.assert_called_once()
+    mock_agent.assert_called_once()
+
+
+@uses_test_session
+def test_viewer_cannot_run_agent(db_session) -> None:
+    brand, editor = _setup_brand(db_session, UserRole.EDITOR, suffix="-1")
+    _brand2, viewer = _setup_brand(db_session, UserRole.VIEWER, suffix="-2")
+    viewer.organization_id = editor.organization_id
+    db_session.flush()
+
+    response = client.post(
+        f"/brands/{brand.id}/onboarding/run-agent", headers=_auth_headers(viewer)
+    )
+
+    assert response.status_code == 403
 
 
 @uses_test_session
