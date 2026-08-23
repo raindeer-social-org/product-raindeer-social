@@ -1,7 +1,9 @@
 name: frontend-ci
+# No `branches:` filter — see backend-ci.yml's comment: a required check
+# scoped only to PRs targeting main leaves stacked feature-branch PRs
+# permanently stuck waiting for a status that never reports.
 on:
   pull_request:
-    branches: [main]
     paths: ["apps/web/**"]
 jobs:
   build:
