@@ -11,9 +11,10 @@ all stages wired in order, and the durability guarantee that makes the
 human review step safe to build — a paused run's state lives in Postgres
 (see checkpointer.py), not in process memory, so it survives a server
 restart. #19 is the first of those real-logic swaps: "research" now runs
-packages/agents/pipeline/nodes/research_engine.py instead of a stub. #20
-and #21 followed the same pattern for "creative"
-(nodes/creative_engine.py) and "generation" (nodes/generation_engine.py).
+packages/agents/pipeline/nodes/research_engine.py instead of a stub. #20,
+#21, and #24 followed the same pattern for "creative"
+(nodes/creative_engine.py), "generation" (nodes/generation_engine.py),
+and "reviewer" (nodes/reviewer_engine.py).
 
 The Human Review stage is a genuine LangGraph interrupt (`interrupt()`),
 not a status flag polled by a cron job: calling it suspends the graph
@@ -23,10 +24,10 @@ with a brand-new checkpointer instance pointed at the same database — replays
 up to the interrupt and continues with whatever value the resume provides.
 
 * The issue text calls this a "seven-step" pipeline while listing eight
-stage names. Reviewer (#24) and Human Review (#25) are tracked as
-separate future issues with distinct real logic, so this graph keeps them
-as two distinct nodes rather than forcing a miscount — PIPELINE_STAGES
-below is the source of truth for what's actually wired up.
+stage names. Reviewer (#24) and Human Review (#25) were tracked as
+separate issues with distinct real logic, so this graph keeps them as two
+distinct nodes rather than forcing a miscount — PIPELINE_STAGES below is
+the source of truth for what's actually wired up.
 """
 
 from collections.abc import Iterator
@@ -42,6 +43,7 @@ from apps.api.models.post import PipelineStage, Post
 from packages.agents.pipeline.nodes.creative_engine import build_creative_node
 from packages.agents.pipeline.nodes.generation_engine import build_generation_node
 from packages.agents.pipeline.nodes.research_engine import build_research_node
+from packages.agents.pipeline.nodes.reviewer_engine import build_reviewer_node
 
 # Pipeline order — the single source of truth for both graph wiring and the
 # tests that assert nodes are "present and wired in order".
@@ -101,6 +103,15 @@ class PipelineState(TypedDict):
     # research_brief's comment above), so this must be listed even though
     # it's only ever set by this one stage.
     generation_output: dict[str, Any] | None
+    # Populated by the reviewer node (#24) — the automated brand-voice/
+    # compliance/platform-fit review of Post.body_text: an overall score/
+    # verdict plus a per-platform breakdown (score/verdict/issues/
+    # suggested_edits), the same info persisted onto the ReviewFeedback
+    # row that stage writes (apps/api/models/review_feedback.py,
+    # source=ai_reviewer). LangGraph drops any state key not declared
+    # here (see research_brief's comment above), so this must be listed
+    # even though it's only ever set by this one stage.
+    review_output: dict[str, Any] | None
 
 
 def _stub_result(stage: str, state: PipelineState, **extra: Any) -> dict:
@@ -144,13 +155,14 @@ def build_pipeline_graph(checkpointer, db: Session | None = None) -> CompiledSta
     graph object could serve every run; callers select a run via the
     per-invocation `thread_id` in the LangGraph config.
 
-    `db` is the one exception: the "research" (#19), "creative" (#20), and
-    "generation" (#21) stages are the first nodes with real logic that
-    need a database session (to resolve Post -> Brand, and, for
-    generation, to write Post.body_text/PostVersion), so it's threaded
-    through here to those nodes' factories. It's optional and defaults to
-    None so callers that only want to inspect the compiled graph's
-    structure — never stream/invoke it — can keep calling this with just a
+    `db` is the one exception: the "research" (#19), "creative" (#20),
+    "generation" (#21), and "reviewer" (#24) stages are the first nodes
+    with real logic that need a database session (to resolve Post ->
+    Brand, and, for generation, to write Post.body_text/PostVersion, and
+    for reviewer, to write ReviewFeedback), so it's threaded through here
+    to those nodes' factories. It's optional and defaults to None so
+    callers that only want to inspect the compiled graph's structure —
+    never stream/invoke it — can keep calling this with just a
     checkpointer, same as before #19."""
     graph = StateGraph(PipelineState)
 
@@ -163,6 +175,8 @@ def build_pipeline_graph(checkpointer, db: Session | None = None) -> CompiledSta
             node = build_creative_node(db)
         elif stage == "generation":
             node = build_generation_node(db)
+        elif stage == "reviewer":
+            node = build_reviewer_node(db)
         else:
             node = _make_stub_node(stage)
         graph.add_node(stage, node)
