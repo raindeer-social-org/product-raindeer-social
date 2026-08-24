@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     linkedin_client_secret: str | None = None
     linkedin_redirect_uri: str | None = None
 
+    x_client_id: str | None = None
+    x_client_secret: str | None = None
+    x_redirect_uri: str | None = None
+    # Reserved for X API app-level auth (e.g. the v1.1 media/upload
+    # endpoint, which needs OAuth 1.0a rather than the OAuth2 bearer token
+    # used everywhere else here) — not required by the OAuth2 publish flow
+    # XProvider uses today.
+    x_api_key: str | None = None
+
     search_provider: str = "tavily"
     llm_provider: str = "openrouter"
     storage_provider: str = "supabase"

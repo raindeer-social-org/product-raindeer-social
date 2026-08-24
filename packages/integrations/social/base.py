@@ -34,17 +34,46 @@ class SocialOAuthProvider(ABC):
         ...
 
 
+@dataclass
+class PublishResult:
+    """Returned by SocialPublisher.publish(). Like SocialTokens above,
+    deliberately a plain dataclass (not tied to any ORM model) so this
+    package never depends on apps.api — the caller (the publish queue in
+    #31) is responsible for turning this into whatever it writes back onto
+    Post/SocialAccount."""
+
+    success: bool
+    platform_post_id: str | None = None
+    platform_post_url: str | None = None
+    error: str | None = None
+    # Populated only when publish() had to transparently refresh an
+    # expired access token to succeed — lets the caller persist the new
+    # token onto SocialAccount rather than the adapter reaching into that
+    # table itself.
+    refreshed_tokens: SocialTokens | None = None
+
+
 class SocialPublisher(ABC):
-    """Interface #30's publishing adapters implement. Declared here (not
-    implemented until #30) so the SocialAccount storage this issue builds
-    has a stable contract to be read through from day one — #30 doesn't
-    have to touch this table's shape at all, only add adapters against it.
-    Takes primitive types (not the SocialAccount ORM model) so this
-    package never depends on apps.api."""
+    """Interface every publishing adapter implements. Business/router code
+    (and the #31 publish queue) must only ever depend on this interface —
+    never import a vendor SDK or call a vendor URL directly outside the
+    adapter that implements it. Takes primitive types (not the
+    SocialAccount ORM model) so this package never depends on apps.api."""
 
     @abstractmethod
     def publish(
-        self, access_token: str, content: str, media_urls: list[str] | None = None
-    ) -> str:
-        """Publish content, returning the platform's post id/URL."""
+        self,
+        access_token: str,
+        content: str,
+        media_urls: list[str] | None = None,
+        refresh_token: str | None = None,
+    ) -> PublishResult:
+        """Publish content. If the platform reports access_token as
+        expired/invalid and refresh_token is provided, refreshes it and
+        retries exactly once before giving up — that retry (success or
+        failure) is what's returned, never surfaced as a separate error to
+        the caller. Never raises for an ordinary publish failure (bad
+        token, rejected content, network/HTTP error, a failed refresh) —
+        those come back as PublishResult(success=False, error=...) so the
+        caller doesn't need a try/except around every call site."""
         ...
