@@ -18,6 +18,8 @@ pyjwt==2.10.1
 bcrypt==4.2.1
 python-multipart==0.0.20
 
+openai==1.109.1
+
 pytest==8.3.4
 pytest-cov==6.0.0
 httpx==0.28.1
