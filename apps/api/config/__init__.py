@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     openrouter_api_key: str | None = None
     tavily_api_key: str | None = None
+    fal_api_key: str | None = None
 
     linkedin_client_id: str | None = None
     linkedin_client_secret: str | None = None
@@ -30,6 +31,7 @@ class Settings(BaseSettings):
     llm_provider: str = "openrouter"
     storage_provider: str = "supabase"
     embedding_provider: str = "openai"
+    image_provider: str = "fal"
 
     # OpenRouter's free-models router — swap for a paid model slug (e.g.
     # "anthropic/claude-sonnet-4.5") once quality/latency needs outgrow it.
