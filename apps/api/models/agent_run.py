@@ -15,6 +15,12 @@ class AgentType(str, enum.Enum):
     CREATIVE = "creative"
     GENERATION = "generation"
     REVIEWER = "reviewer"
+    # Added by Issue #18 (pipeline orchestration) alongside the Post model —
+    # the remaining stub nodes in packages/agents/pipeline/graph.py.
+    HUMAN_REVIEW = "human_review"
+    SCHEDULER = "scheduler"
+    PUBLISHER = "publisher"
+    ANALYTICS_COLLECTOR = "analytics_collector"
 
 
 class AgentRun(Base):
@@ -23,8 +29,9 @@ class AgentRun(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    # No FK yet — Post doesn't exist until a later issue (M3). Nullable so
-    # onboarding runs (not tied to any Post) can log here too.
+    # Still no FK constraint: Post now exists (Issue #18) but agent_runs
+    # predates it and onboarding runs aren't tied to any Post, so this
+    # stays a plain nullable UUID rather than a hard FK.
     post_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     agent_type: Mapped[AgentType] = mapped_column(
