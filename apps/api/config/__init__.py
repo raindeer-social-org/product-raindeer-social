@@ -52,6 +52,22 @@ class Settings(BaseSettings):
 
     sentry_dsn: str | None = None
 
+    # --- Status notifications (Issue #32) ---
+    # Generic SMTP, not a vendor SDK — works with any transactional-email
+    # provider that exposes SMTP credentials (SES/SendGrid/Postmark/
+    # Resend/...). Left unset (smtp_host=None) disables email sending;
+    # apps/api/services/notifications.py's EmailAdapter no-ops rather than
+    # attempting a connection.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    notification_from_email: str | None = None
+    # Slack incoming-webhook URL. Left unset disables Slack notifications;
+    # apps/api/services/notifications.py's SlackWebhookAdapter no-ops
+    # rather than posting to an empty URL.
+    slack_webhook_url: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:
