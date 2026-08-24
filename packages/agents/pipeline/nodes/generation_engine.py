@@ -65,7 +65,12 @@ from sqlalchemy.orm import Session
 from apps.api.config import get_settings
 from apps.api.models.post import Post
 from apps.api.models.post_version import PostVersion
-from packages.integrations.registry import get_llm_provider
+from packages.integrations.registry import (
+    get_llm_provider,
+    get_storage_provider,
+    get_video_provider,
+)
+from packages.integrations.video_gen.base import VideoResult
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +79,12 @@ logger = logging.getLogger(__name__)
 # substring rather than exact value — "short_video" and "carousel_post"
 # both still need the media hook.
 MEDIA_FORMAT_KEYWORDS = ("image", "video", "carousel")
+
+# Subset of MEDIA_FORMAT_KEYWORDS this issue (#23) actually implements —
+# "image" stays a stub here; Issue #22 replaces that branch separately, on
+# its own concurrent PR, so this file's changes stay narrowly scoped to
+# video/carousel (see generate_media_stub below).
+VIDEO_FORMAT_KEYWORDS = ("video", "carousel")
 
 # Rough, provider-agnostic per-token estimate used only to keep
 # AgentRun.cost/PostVersion.cost populated (per #21's acceptance criteria)
@@ -105,24 +116,96 @@ def _requires_media(platform_brief: dict[str, Any]) -> bool:
     return any(keyword in fmt for keyword in MEDIA_FORMAT_KEYWORDS)
 
 
+def _is_video_or_carousel_format(fmt: str) -> bool:
+    return any(keyword in fmt for keyword in VIDEO_FORMAT_KEYWORDS)
+
+
+def _build_video_prompt(platform_brief: dict[str, Any]) -> str:
+    """Composes a text-to-video prompt straight from the creative brief's
+    hook/angle/tone — same spirit as _fallback_copy_for below: no separate
+    LLM call just to write a video prompt, reuse what the Creative Engine
+    (#20) already produced."""
+    hook = str(platform_brief.get("hook") or "").strip()
+    angle = str(platform_brief.get("angle") or "").strip()
+    tone = str(platform_brief.get("tone") or "").strip()
+    parts = [part for part in (hook, angle, tone) if part]
+    if parts:
+        return " — ".join(parts)
+    return "Short-form social media video."
+
+
+def _store_generated_video(post_id: str, platform: str, result: VideoResult) -> str:
+    """Persists the generated asset via this repo's own StorageProvider
+    (#11) rather than linking Runway's own hosted URL directly — vendor
+    output URLs for video-gen are not guaranteed to stay valid
+    indefinitely. Interface-only: only ever talks to StorageProvider,
+    never a vendor SDK/URL directly."""
+    storage = get_storage_provider()
+    extension = "mp4" if "mp4" in (result.content_type or "") else "bin"
+    path = f"generated-media/{post_id}/{platform}-{uuid.uuid4().hex}.{extension}"
+    return storage.upload(path, result.content, result.content_type or "video/mp4")
+
+
 def generate_media_stub(post_id: str, platform: str, platform_brief: dict[str, Any]) -> dict[str, Any]:
-    """Placeholder image/video-generation hook. Deliberately a plain
-    function (not yet an interface like LLMProvider/SearchProvider) since
-    #22 (image) and #23 (video) haven't defined that interface yet — this
-    issue's job is only to guarantee the *call site* exists in the
-    pipeline, genuinely reached when a platform's format calls for it, for
-    #22/#23 to plug into (replace/extend) rather than having to invent the
-    wiring themselves."""
+    """Image/video-generation hook, called whenever a platform's brief
+    calls for image/video/carousel. Issue #23 (this issue) fills in the
+    video/carousel branch with a real VideoProvider adapter
+    (packages/integrations/video_gen/runway_provider.py), called only
+    through the VideoProvider interface — never a direct vendor SDK/HTTP
+    call from this file. The image branch stays a stub here; Issue #22
+    replaces it separately (on its own concurrent PR), so this function's
+    changes stay narrowly scoped to the video/carousel case.
+
+    Degrades gracefully: a VideoProvider failure, or a StorageProvider
+    failure while persisting the result, is caught and logged (the
+    VideoProvider/StorageProvider adapters themselves already log to
+    integration_calls via track_integration_call) rather than raised —
+    same degrade-on-failure contract every other external call in this
+    pipeline follows (research_engine.py/creative_engine.py, and this
+    module's own LLM copy generation above), so a broken/unconfigured
+    video provider never crashes the whole pipeline run."""
+    fmt = str(platform_brief.get("format") or "")
     logger.info(
-        "Generation Engine: media hook stub called for post=%s platform=%s format=%r",
+        "Generation Engine: media hook called for post=%s platform=%s format=%r",
         post_id,
         platform,
-        platform_brief.get("format"),
+        fmt,
     )
+
+    if not _is_video_or_carousel_format(fmt.lower()):
+        # Image formats: Issue #22 replaces this branch with a real
+        # ImageProvider adapter.
+        return {
+            "status": "stubbed",
+            "platform": platform,
+            "format": fmt or None,
+            "url": None,
+        }
+
+    try:
+        prompt = _build_video_prompt(platform_brief)
+        result = get_video_provider().generate(prompt=prompt)
+        url = _store_generated_video(post_id, platform, result)
+    except Exception:
+        logger.warning(
+            "Generation Engine: video/carousel generation failed for post=%s "
+            "platform=%s; degrading gracefully (no media attached)",
+            post_id,
+            platform,
+            exc_info=True,
+        )
+        return {
+            "status": "failed",
+            "platform": platform,
+            "format": fmt or None,
+            "url": None,
+        }
+
     return {
-        "status": "stubbed",
+        "status": "generated",
         "platform": platform,
-        "format": platform_brief.get("format"),
+        "format": fmt or None,
+        "url": url,
     }
 
 
@@ -242,6 +325,24 @@ def _generation_output(db: Session, post: Post, creative_brief: dict[str, Any]) 
 
     body_text = {platform: result["body_text"] for platform, result in platform_results.items()}
     cost = _estimate_cost(tokens)
+
+    # Link successfully generated video/carousel media onto Post.media —
+    # a dict keyed by platform, each value a list of media reference dicts
+    # (see apps/api/models/post.py). Only platforms whose media actually
+    # generated (status == "generated", i.e. has a stored url) get an
+    # entry; a failed/stubbed result is intentionally left out rather than
+    # written as a placeholder. Merged onto any existing media (rather
+    # than replaced wholesale) so a run that only touches some platforms
+    # doesn't wipe out media a previous run already stored for others.
+    media_by_platform = {
+        platform: [result["media"]]
+        for platform, result in platform_results.items()
+        if result.get("media") and result["media"].get("url")
+    }
+    if media_by_platform:
+        merged_media = dict(post.media or {})
+        merged_media.update(media_by_platform)
+        post.media = merged_media
 
     # Write the generated copy onto the Post itself, and append an
     # immutable version-history row (see module docstring) so a second

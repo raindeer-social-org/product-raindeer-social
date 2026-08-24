@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     llm_provider: str = "openrouter"
     storage_provider: str = "supabase"
     embedding_provider: str = "openai"
+    video_provider: str = "runway"
 
     # OpenRouter's free-models router — swap for a paid model slug (e.g.
     # "anthropic/claude-sonnet-4.5") once quality/latency needs outgrow it.
@@ -40,6 +41,9 @@ class Settings(BaseSettings):
     supabase_url: str | None = None
     supabase_service_key: str | None = None
     supabase_storage_bucket: str = "brand-assets"
+
+    # Generation Engine's video/carousel branch (Issue #23).
+    runway_api_key: str | None = None
 
     sentry_dsn: str | None = None
 

@@ -57,6 +57,18 @@ class Post(Base):
     # post is regenerated.
     body_text: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    # Written by the Generation Engine's media hook (Issue #23, video/
+    # carousel branch — Issue #22 covers the image branch) — a dict keyed
+    # by platform, same per-platform shape as body_text, but each value is
+    # a *list* of media reference dicts (e.g. [{"url": ..., "status":
+    # "generated", "format": "short_video"}]) rather than a plain string,
+    # since a carousel is multiple media items for one platform. Only
+    # platforms whose media actually generated successfully get an entry
+    # here — a failed generation degrades gracefully (see
+    # generation_engine.py) and simply leaves that platform's entry
+    # unset/unchanged rather than writing a placeholder.
+    media: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
