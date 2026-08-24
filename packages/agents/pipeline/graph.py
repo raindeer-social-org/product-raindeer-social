@@ -143,9 +143,35 @@ def _human_review_node(state: PipelineState) -> dict:
     here for hours or days waiting on a human, across process restarts,
     without any polling. Resuming with Command(resume=<decision>) re-enters
     this node, interrupt() returns the decision instead of pausing again,
-    and the graph continues on to `scheduler`."""
+    and the graph continues on to `scheduler` (or halts at END — see
+    _route_after_human_review below) depending on that decision."""
     decision = interrupt({"stage": "human_review", "post_id": state["post_id"]})
     return _stub_result("human_review", state, human_review_decision=decision)
+
+
+def _decision_action(decision: Any) -> str | None:
+    """Normalizes a resumed human_review_decision down to its action
+    string. Accepts either a bare string (e.g. "approved" — the shape
+    test_pipeline_graph.py's pre-#25 tests already resume with) or a dict
+    with a "decision" key (the shape apps/api/routers/review.py sends,
+    e.g. {"decision": "rejected", "comments": "..."}), so #25's API can
+    carry richer payloads without breaking the simpler existing callers."""
+    if isinstance(decision, dict):
+        decision = decision.get("decision")
+    if isinstance(decision, str):
+        return decision.lower()
+    return None
+
+
+def _route_after_human_review(state: PipelineState) -> str:
+    """Issue #25's actual resume-or-halt mechanism: a human's "rejected"
+    decision must not let the run reach `scheduler`/`publisher` — every
+    other decision (e.g. "approved") proceeds through the rest of the
+    pipeline as before. This is the only conditional edge in the graph;
+    every other stage is an unconditional straight line."""
+    if _decision_action(state.get("human_review_decision")) == "rejected":
+        return END
+    return "scheduler"
 
 
 def build_pipeline_graph(checkpointer, db: Session | None = None) -> CompiledStateGraph:
@@ -183,7 +209,15 @@ def build_pipeline_graph(checkpointer, db: Session | None = None) -> CompiledSta
 
     graph.add_edge(START, PIPELINE_STAGES[0])
     for upstream, downstream in zip(PIPELINE_STAGES, PIPELINE_STAGES[1:]):
-        graph.add_edge(upstream, downstream)
+        if upstream == "human_review":
+            # The one conditional edge in the graph — see
+            # _route_after_human_review's docstring. Every other stage is
+            # an unconditional straight line, same as before #25.
+            graph.add_conditional_edges(
+                "human_review", _route_after_human_review, {"scheduler": "scheduler", END: END}
+            )
+        else:
+            graph.add_edge(upstream, downstream)
     graph.add_edge(PIPELINE_STAGES[-1], END)
 
     return graph.compile(checkpointer=checkpointer)
@@ -277,6 +311,11 @@ def run_pipeline(
     state = graph.get_state(config)
     if state.next:
         post.current_pipeline_stage = STAGE_TO_PIPELINE_STAGE[state.next[0]]
+    elif _decision_action(state.values.get("human_review_decision")) == "rejected":
+        # Reached END via _route_after_human_review's reject branch, not
+        # by running the full pipeline to Analytics Collector — COMPLETED
+        # would misleadingly imply the post was actually published.
+        post.current_pipeline_stage = PipelineStage.REJECTED
     else:
         post.current_pipeline_stage = PipelineStage.COMPLETED
     db.flush()
