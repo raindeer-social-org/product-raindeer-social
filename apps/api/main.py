@@ -9,6 +9,7 @@ from apps.api.observability import init_sentry
 from apps.api.routers.brands import router as brands_router
 from apps.api.routers.calendar import router as calendar_router
 from apps.api.routers.onboarding import router as onboarding_router
+from apps.api.routers.review import router as review_router
 from apps.api.routers.social_accounts import router as social_accounts_router
 
 settings = get_settings()
@@ -23,6 +24,7 @@ app.include_router(auth_router)
 app.include_router(brands_router)
 app.include_router(calendar_router)
 app.include_router(onboarding_router)
+app.include_router(review_router)
 app.include_router(social_accounts_router)
 
 

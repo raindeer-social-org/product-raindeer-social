@@ -536,3 +536,183 @@ button {
 .calendar-form-actions button {
   font: inherit;
 }
+
+/* Review Queue (#25) */
+
+.review-queue-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.review-queue-header h1 {
+  margin: 0 0 0.25rem;
+}
+
+.review-queue-error {
+  color: #b00020;
+}
+
+.review-queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.review-card {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.review-card-header {
+  color: var(--color-muted);
+  font-size: 0.85rem;
+}
+
+.review-card-draft h3,
+.review-card-ai-review h3,
+.review-card-human-history h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.review-card-empty {
+  color: var(--color-muted);
+}
+
+.review-card-platform-copy {
+  margin-bottom: 0.5rem;
+}
+
+.review-card-platform-copy p {
+  margin: 0.15rem 0 0;
+  white-space: pre-wrap;
+}
+
+.review-card-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.review-card-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.review-card-edit-field textarea {
+  padding: 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font: inherit;
+}
+
+.review-card-edit-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.review-card-ai-review {
+  background: #f7f8fc;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+}
+
+.review-card-platform-reviews {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.review-card-issues {
+  margin: 0.25rem 0;
+  padding-left: 1.1rem;
+  color: var(--color-muted);
+}
+
+.review-card-suggested-edits {
+  margin: 0.25rem 0 0;
+  font-style: italic;
+  color: var(--color-muted);
+}
+
+.verdict-approve {
+  color: #1a7f37;
+  font-weight: 600;
+}
+
+.verdict-revise {
+  color: #a35a00;
+  font-weight: 600;
+}
+
+.verdict-reject {
+  color: #b00020;
+  font-weight: 600;
+}
+
+.review-card-human-history ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.review-card-reschedule-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.review-card-reschedule-form input {
+  padding: 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font: inherit;
+}
+
+.review-card-comments {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.review-card-comments textarea {
+  padding: 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font: inherit;
+}
+
+.review-card-error {
+  color: #b00020;
+}
+
+.review-card-decision-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.review-card-reject {
+  border: 1px solid #b00020;
+  color: #b00020;
+  background: transparent;
+  border-radius: 4px;
+  padding: 0.45rem 0.85rem;
+  cursor: pointer;
+}
+
+.review-card-approve {
+  border: none;
+  border-radius: 4px;
+  padding: 0.45rem 0.85rem;
+  background: var(--color-accent);
+  color: #ffffff;
+  cursor: pointer;
+}
