@@ -1,0 +1,177 @@
+:root {
+  color-scheme: light;
+  --color-bg: #ffffff;
+  --color-fg: #1a1a1a;
+  --color-border: #d9d9d9;
+  --color-muted: #666666;
+  --color-accent: #2b5fff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--color-fg);
+  background: var(--color-bg);
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+button {
+  font: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+
+.nav-primary {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+}
+
+.nav-logo {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.nav-links {
+  list-style: none;
+  display: flex;
+  gap: 1.25rem;
+  margin: 0;
+  padding: 0;
+}
+
+.nav-links a[aria-current="page"] {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.nav-secondary {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.brand-switcher {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+}
+
+.brand-switcher-status {
+  font-size: 0.9rem;
+  color: var(--color-muted);
+}
+
+.brand-switcher-error {
+  color: #b00020;
+}
+
+.nav-logout {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  border-radius: 4px;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+}
+
+.app-main {
+  flex: 1;
+  padding: 2rem 1.5rem;
+  max-width: 960px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.auth-gate-status {
+  padding: 2rem;
+  text-align: center;
+  color: var(--color-muted);
+}
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 2rem;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 1rem;
+}
+
+.login-field input {
+  padding: 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font: inherit;
+}
+
+.login-error {
+  color: #b00020;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.login-submit {
+  width: 100%;
+  padding: 0.6rem;
+  border: none;
+  border-radius: 4px;
+  background: var(--color-accent);
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.login-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.scoped-brand {
+  color: var(--color-muted);
+}
+
+.stub-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
