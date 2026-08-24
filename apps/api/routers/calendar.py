@@ -8,6 +8,10 @@ from apps.api.config.database import get_db
 from apps.api.middleware.rbac import require_role
 from apps.api.models import Brand, ContentCalendarEvent, UserRole
 from apps.api.schemas.calendar import CalendarEventCreate, CalendarEventRead, CalendarEventUpdate
+from apps.api.services.scheduling_suggestion import (
+    NoResearchSignalError,
+    suggest_target_datetime,
+)
 
 router = APIRouter(prefix="/brands/{brand_id}/calendar-events", tags=["calendar"])
 
@@ -49,7 +53,31 @@ def create_event(
     current_user: CurrentUser = Depends(require_role(*WRITE_ROLES)),
 ) -> ContentCalendarEvent:
     _get_org_brand(db, brand_id, current_user.org_id)
-    event = ContentCalendarEvent(brand_id=brand_id, **payload.model_dump())
+    data = payload.model_dump()
+
+    # #28: an explicitly provided target_datetime always wins — the
+    # suggestion service is only consulted when the caller left it out.
+    if data["target_datetime"] is None:
+        # A calendar event can target multiple platforms at once; the
+        # suggestion service proposes a single datetime for one platform,
+        # so the first requested platform drives it (the same platform the
+        # research brief itself would have been keyed on if this event
+        # already existed when research ran).
+        suggestion_platform = payload.target_platforms[0]
+        try:
+            suggestion = suggest_target_datetime(db, brand_id, suggestion_platform)
+        except NoResearchSignalError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "target_datetime was not provided and no research signal is "
+                    f"available yet to suggest one ({exc}). Provide target_datetime "
+                    "explicitly."
+                ),
+            ) from exc
+        data["target_datetime"] = suggestion.target_datetime
+
+    event = ContentCalendarEvent(brand_id=brand_id, **data)
     db.add(event)
     db.flush()
     db.refresh(event)
