@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, Enum, ForeignKey, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from apps.api.config.database import Base
@@ -46,6 +46,16 @@ class Post(Base):
         nullable=False,
         default=PipelineStage.RESEARCH,
     )
+
+    # Written by the Generation Engine (Issue #21) — a dict keyed by
+    # platform (e.g. {"linkedin": "...", "x": "..."}), matching
+    # creative_brief's per-platform shape, since a single Post carries
+    # copy for every platform its creative_brief targeted rather than
+    # just one. Always holds the *latest* generation; every version
+    # (including this one) is also appended to PostVersion
+    # (apps/api/models/post_version.py) so nothing is ever lost when a
+    # post is regenerated.
+    body_text: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

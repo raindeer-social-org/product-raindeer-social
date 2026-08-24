@@ -11,7 +11,9 @@ all stages wired in order, and the durability guarantee that makes the
 human review step safe to build — a paused run's state lives in Postgres
 (see checkpointer.py), not in process memory, so it survives a server
 restart. #19 is the first of those real-logic swaps: "research" now runs
-packages/agents/pipeline/nodes/research_engine.py instead of a stub.
+packages/agents/pipeline/nodes/research_engine.py instead of a stub. #20
+and #21 followed the same pattern for "creative"
+(nodes/creative_engine.py) and "generation" (nodes/generation_engine.py).
 
 The Human Review stage is a genuine LangGraph interrupt (`interrupt()`),
 not a status flag polled by a cron job: calling it suspends the graph
@@ -38,6 +40,7 @@ from sqlalchemy.orm import Session
 from apps.api.models.agent_run import AgentRun, AgentType
 from apps.api.models.post import PipelineStage, Post
 from packages.agents.pipeline.nodes.creative_engine import build_creative_node
+from packages.agents.pipeline.nodes.generation_engine import build_generation_node
 from packages.agents.pipeline.nodes.research_engine import build_research_node
 
 # Pipeline order — the single source of truth for both graph wiring and the
@@ -91,6 +94,13 @@ class PipelineState(TypedDict):
     # (format/angle/hook/CTA per target platform) #21 (Generation Engine)
     # consumes to actually write copy.
     creative_brief: dict[str, Any] | None
+    # Populated by the generation node (#21) — the generated copy per
+    # platform (written onto Post.body_text), plus model/tokens/cost/
+    # latency_ms metadata that run_pipeline below reads onto this stage's
+    # AgentRun row. LangGraph drops any state key not declared here (see
+    # research_brief's comment above), so this must be listed even though
+    # it's only ever set by this one stage.
+    generation_output: dict[str, Any] | None
 
 
 def _stub_result(stage: str, state: PipelineState, **extra: Any) -> dict:
@@ -134,13 +144,14 @@ def build_pipeline_graph(checkpointer, db: Session | None = None) -> CompiledSta
     graph object could serve every run; callers select a run via the
     per-invocation `thread_id` in the LangGraph config.
 
-    `db` is the one exception: the "research" (#19) and "creative" (#20)
-    stages are the first nodes with real logic that need a database
-    session (to resolve Post -> Brand), so it's threaded through here to
-    those nodes' factories. It's optional and defaults to None so callers
-    that only want to inspect the compiled graph's structure — never
-    stream/invoke it — can keep calling this with just a checkpointer,
-    same as before #19."""
+    `db` is the one exception: the "research" (#19), "creative" (#20), and
+    "generation" (#21) stages are the first nodes with real logic that
+    need a database session (to resolve Post -> Brand, and, for
+    generation, to write Post.body_text/PostVersion), so it's threaded
+    through here to those nodes' factories. It's optional and defaults to
+    None so callers that only want to inspect the compiled graph's
+    structure — never stream/invoke it — can keep calling this with just a
+    checkpointer, same as before #19."""
     graph = StateGraph(PipelineState)
 
     for stage in PIPELINE_STAGES:
@@ -150,6 +161,8 @@ def build_pipeline_graph(checkpointer, db: Session | None = None) -> CompiledSta
             node = build_research_node(db)
         elif stage == "creative":
             node = build_creative_node(db)
+        elif stage == "generation":
+            node = build_generation_node(db)
         else:
             node = _make_stub_node(stage)
         graph.add_node(stage, node)
@@ -207,12 +220,33 @@ def run_pipeline(
 
             stage = STAGE_TO_PIPELINE_STAGE[node_name]
             post.current_pipeline_stage = stage
+
+            # Every stage gets exactly one AgentRun row here, from
+            # whatever dict the node returned — this is the single
+            # AgentRun-logging path for the whole pipeline (see
+            # test_pipeline_graph.py's exact per-stage row-count
+            # assertions). Most stages' output dicts carry no model/
+            # tokens/cost info, so those columns stay None for them, same
+            # as before #21. The generation node (#21) is the first to
+            # populate them — via a "generation_output" entry with
+            # model/tokens/cost/latency_ms keys — because it's the first
+            # stage whose LLM usage this repo tracks a cost for.
+            run_metadata: dict[str, Any] = {}
+            if isinstance(node_output, dict):
+                candidate = node_output.get("generation_output")
+                if isinstance(candidate, dict):
+                    run_metadata = candidate
+
             db.add(
                 AgentRun(
                     post_id=post.id,
                     agent_type=STAGE_TO_AGENT_TYPE[node_name],
                     input={"post_id": str(post.id)},
                     output=node_output if isinstance(node_output, dict) else None,
+                    model=run_metadata.get("model"),
+                    tokens=run_metadata.get("tokens"),
+                    cost=run_metadata.get("cost"),
+                    latency_ms=run_metadata.get("latency_ms"),
                 )
             )
             db.flush()
