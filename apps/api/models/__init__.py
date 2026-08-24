@@ -6,6 +6,7 @@ from apps.api.models.content_calendar_event import (
     CalendarEventStatus,
     ContentCalendarEvent,
 )
+from apps.api.models.engagement_snapshot import EngagementSnapshot
 from apps.api.models.integration_call import IntegrationCall
 from apps.api.models.onboarding_research import OnboardingResearch
 from apps.api.models.onboarding_response import OnboardingResponse
@@ -24,6 +25,7 @@ __all__ = [
     "BrandReportChunk",
     "CalendarEventStatus",
     "ContentCalendarEvent",
+    "EngagementSnapshot",
     "IntegrationCall",
     "OnboardingResearch",
     "OnboardingResponse",
