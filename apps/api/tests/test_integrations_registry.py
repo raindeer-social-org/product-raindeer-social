@@ -3,7 +3,9 @@ import pytest
 from apps.api.config import get_settings
 from packages.integrations.llm.openai_provider import OpenAIProvider
 from packages.integrations.llm.openrouter_provider import OpenRouterProvider
+from packages.integrations.embedding.openai_provider import OpenAIEmbeddingProvider
 from packages.integrations.registry import (
+    get_embedding_provider,
     get_llm_provider,
     get_search_provider,
     get_social_oauth_provider,
@@ -51,3 +53,13 @@ def test_get_social_oauth_provider_resolves_linkedin() -> None:
 def test_unknown_social_platform_raises() -> None:
     with pytest.raises(ValueError, match="Unknown social platform"):
         get_social_oauth_provider("tiktok")
+
+
+def test_get_embedding_provider_defaults_to_openai() -> None:
+    assert isinstance(get_embedding_provider(), OpenAIEmbeddingProvider)
+
+
+def test_unknown_embedding_provider_raises(monkeypatch) -> None:
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "cohere")
+    with pytest.raises(ValueError, match="Unknown EMBEDDING_PROVIDER"):
+        get_embedding_provider()

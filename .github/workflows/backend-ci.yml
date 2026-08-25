@@ -45,7 +45,7 @@ jobs:
         env: { DATABASE_URL: postgresql://postgres:postgres@localhost:5432/raindeer_test }
 
       # 6. Run the test suite with coverage
-      - run: pytest apps/api/tests -v --cov=apps/api --cov=packages --cov-report=term-missing --cov-fail-under=70
+      - run: pytest apps/api/tests packages/agents/tests -v --cov=apps/api --cov=packages --cov-report=term-missing --cov-fail-under=70
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/raindeer_test
           REDIS_URL: redis://localhost:6379/0
