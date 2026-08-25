@@ -21,6 +21,8 @@ cryptography==50.0.0
 
 langgraph==1.2.11
 
+openai==1.109.1
+
 pytest==8.3.4
 pytest-cov==6.0.0
 httpx==0.28.1
