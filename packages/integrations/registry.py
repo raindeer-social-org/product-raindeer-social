@@ -13,6 +13,8 @@ from packages.integrations.social.linkedin_provider import LinkedInProvider
 from packages.integrations.social.x_provider import XProvider
 from packages.integrations.storage.base import StorageProvider
 from packages.integrations.storage.supabase_provider import SupabaseStorageProvider
+from packages.integrations.video_gen.base import VideoProvider
+from packages.integrations.video_gen.runway_provider import RunwayProvider
 
 _SEARCH_PROVIDERS = {
     "tavily": lambda settings: TavilyProvider(api_key=settings.tavily_api_key or ""),
@@ -66,6 +68,10 @@ _STORAGE_PROVIDERS = {
 
 _IMAGE_PROVIDERS = {
     "fal": lambda settings: FalImageProvider(api_key=settings.fal_api_key or ""),
+}
+
+_VIDEO_PROVIDERS = {
+    "runway": lambda settings: RunwayProvider(api_key=settings.runway_api_key or ""),
 }
 
 
@@ -156,5 +162,17 @@ def get_image_provider() -> ImageProvider:
         raise ValueError(
             f"Unknown IMAGE_PROVIDER '{settings.image_provider}'. "
             f"Valid options: {sorted(_IMAGE_PROVIDERS)}"
+        ) from None
+    return factory(settings)
+
+
+def get_video_provider() -> VideoProvider:
+    settings = get_settings()
+    try:
+        factory = _VIDEO_PROVIDERS[settings.video_provider]
+    except KeyError:
+        raise ValueError(
+            f"Unknown VIDEO_PROVIDER '{settings.video_provider}'. "
+            f"Valid options: {sorted(_VIDEO_PROVIDERS)}"
         ) from None
     return factory(settings)
