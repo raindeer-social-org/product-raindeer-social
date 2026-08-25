@@ -49,6 +49,17 @@ class Settings(BaseSettings):
 
     sentry_dsn: str | None = None
 
+    # Comma-separated list of origins allowed to make cross-origin
+    # requests to the API (e.g. the Next.js dev server). Kept as a raw
+    # string here (rather than a `list[str]` field) so a plain
+    # comma-separated env var works without needing JSON-encoding —
+    # see `cors_origins_list` for the parsed form.
+    cors_origins: str = "http://localhost:3000"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
 
 @lru_cache
 def get_settings() -> Settings:
