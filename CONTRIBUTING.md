@@ -67,7 +67,7 @@ to this one issue (§2, point 5).
 # backend changes
 pip install -r apps/api/requirements.txt
 alembic upgrade head
-pytest apps/api/tests -v --cov
+pytest apps/api/tests packages/agents/tests -v --cov
 
 # frontend changes
 npm ci --prefix apps/web
@@ -235,7 +235,7 @@ first.
 ```bash
 pip install -r apps/api/requirements.txt
 alembic upgrade head
-pytest apps/api/tests -v --cov
+pytest apps/api/tests packages/agents/tests -v --cov
 ```
 
 **Frontend** (`apps/web`):
