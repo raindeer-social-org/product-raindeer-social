@@ -7,7 +7,9 @@ from apps.api.middleware.logging import RequestLoggingMiddleware, configure_json
 from apps.api.middleware.rate_limit import RateLimitMiddleware
 from apps.api.observability import init_sentry
 from apps.api.routers.brands import router as brands_router
+from apps.api.routers.calendar import router as calendar_router
 from apps.api.routers.onboarding import router as onboarding_router
+from apps.api.routers.social_accounts import router as social_accounts_router
 
 settings = get_settings()
 configure_json_logging()
@@ -19,7 +21,9 @@ app.add_middleware(RateLimitMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 app.include_router(auth_router)
 app.include_router(brands_router)
+app.include_router(calendar_router)
 app.include_router(onboarding_router)
+app.include_router(social_accounts_router)
 
 
 @app.get("/health")

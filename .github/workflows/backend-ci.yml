@@ -1,7 +1,13 @@
 name: backend-ci
+# No `branches:` filter: this repo stacks dependent feature branches
+# (PR A -> PR B based on A -> PR C based on B, each retargeted to main by
+# GitHub once its base merges), and a required check that only runs for
+# PRs targeting main leaves every stacked PR permanently stuck on
+# "Expected — waiting for status to be reported" for the `test` check —
+# the same failure mode already fixed once for issue-pr-sync's missing
+# `synchronize` trigger. Running for every base keeps that from recurring.
 on:
   pull_request:
-    branches: [main]
 
 jobs:
   test:
@@ -39,7 +45,7 @@ jobs:
         env: { DATABASE_URL: postgresql://postgres:postgres@localhost:5432/raindeer_test }
 
       # 6. Run the test suite with coverage
-      - run: pytest apps/api/tests -v --cov=apps/api --cov=packages --cov-report=term-missing --cov-fail-under=70
+      - run: pytest apps/api/tests packages/agents/tests -v --cov=apps/api --cov=packages --cov-report=term-missing --cov-fail-under=70
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/raindeer_test
           REDIS_URL: redis://localhost:6379/0
