@@ -3,13 +3,15 @@
     Research -> Creative -> Generation -> Reviewer -> [Human Review] ->
     Scheduler -> Publisher -> Analytics Collector
 
-Every node here is a stub — later issues (#19 Research, #20 Creative,
-#21 Generation, #24 Reviewer, #25 Human Review, plus the not-yet-filed
-Scheduler/Publisher/Analytics Collector issues) replace one node's body at
-a time with real logic. This issue's job is the skeleton itself: all
-stages wired in order, and the durability guarantee that makes the human
-review step safe to build — a paused run's state lives in Postgres (see
-checkpointer.py), not in process memory, so it survives a server restart.
+Every node here started as a stub — later issues (#19 Research, #20
+Creative, #21 Generation, #24 Reviewer, #25 Human Review, plus the
+not-yet-filed Scheduler/Publisher/Analytics Collector issues) replace one
+node's body at a time with real logic. #18's job was the skeleton itself:
+all stages wired in order, and the durability guarantee that makes the
+human review step safe to build — a paused run's state lives in Postgres
+(see checkpointer.py), not in process memory, so it survives a server
+restart. #19 is the first of those real-logic swaps: "research" now runs
+packages/agents/pipeline/nodes/research_engine.py instead of a stub.
 
 The Human Review stage is a genuine LangGraph interrupt (`interrupt()`),
 not a status flag polled by a cron job: calling it suspends the graph
@@ -35,6 +37,7 @@ from sqlalchemy.orm import Session
 
 from apps.api.models.agent_run import AgentRun, AgentType
 from apps.api.models.post import PipelineStage, Post
+from packages.agents.pipeline.nodes.research_engine import build_research_node
 
 # Pipeline order — the single source of truth for both graph wiring and the
 # tests that assert nodes are "present and wired in order".
@@ -77,6 +80,12 @@ class PipelineState(TypedDict):
     completed_stages: list[str]
     # Populated once the human_review node's interrupt() is resumed.
     human_review_decision: Any
+    # Populated by the research node (#19) — the structured research brief
+    # #20 (Creative Engine) consumes, including a timing_signal field #28
+    # (auto-scheduling) will eventually use. LangGraph drops any state key
+    # not declared here, so this must be listed even though it's only
+    # ever set by one stage.
+    research_brief: dict[str, Any] | None
 
 
 def _stub_result(stage: str, state: PipelineState, **extra: Any) -> dict:
@@ -113,16 +122,28 @@ def _human_review_node(state: PipelineState) -> dict:
     return _stub_result("human_review", state, human_review_decision=decision)
 
 
-def build_pipeline_graph(checkpointer) -> CompiledStateGraph:
+def build_pipeline_graph(checkpointer, db: Session | None = None) -> CompiledStateGraph:
     """Assembles the pipeline StateGraph and compiles it with the given
-    checkpointer. The graph itself is stateless/reusable — it carries no
-    reference to any particular Post or DB session, so the same compiled
+    checkpointer. The graph itself is otherwise stateless/reusable — it
+    carries no reference to any particular Post, so the same compiled
     graph object could serve every run; callers select a run via the
-    per-invocation `thread_id` in the LangGraph config."""
+    per-invocation `thread_id` in the LangGraph config.
+
+    `db` is the one exception: the "research" stage (#19) is the first
+    node with real logic that needs a database session (to resolve
+    Post -> Brand), so it's threaded through here to that node's factory.
+    It's optional and defaults to None so callers that only want to
+    inspect the compiled graph's structure — never stream/invoke it — can
+    keep calling this with just a checkpointer, same as before #19."""
     graph = StateGraph(PipelineState)
 
     for stage in PIPELINE_STAGES:
-        node = _human_review_node if stage == "human_review" else _make_stub_node(stage)
+        if stage == "human_review":
+            node = _human_review_node
+        elif stage == "research":
+            node = build_research_node(db)
+        else:
+            node = _make_stub_node(stage)
         graph.add_node(stage, node)
 
     graph.add_edge(START, PIPELINE_STAGES[0])
@@ -157,7 +178,7 @@ def run_pipeline(
     wants to observe progress; most callers can just ignore the return
     value and inspect `post.current_pipeline_stage` afterwards.
     """
-    graph = build_pipeline_graph(checkpointer)
+    graph = build_pipeline_graph(checkpointer, db=db)
     config = _thread_config(post)
 
     if resume is not None:
