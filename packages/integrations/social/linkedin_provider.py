@@ -5,6 +5,8 @@ import httpx
 
 from packages.integrations.observability import track_integration_call
 from packages.integrations.social.base import (
+    EngagementMetrics,
+    EngagementResult,
     PublishResult,
     SocialOAuthProvider,
     SocialPublisher,
@@ -27,6 +29,7 @@ class LinkedInProvider(SocialOAuthProvider, SocialPublisher):
     TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
     USERINFO_URL = "https://api.linkedin.com/v2/userinfo"
     UGC_POSTS_URL = "https://api.linkedin.com/v2/ugcPosts"
+    SOCIAL_METRICS_URL = "https://api.linkedin.com/v2/socialMetrics"
 
     SCOPES = ("openid", "profile", "w_member_social")
 
@@ -182,6 +185,37 @@ class LinkedInProvider(SocialOAuthProvider, SocialPublisher):
             platform_post_id=post_id,
             platform_post_url=(
                 f"https://www.linkedin.com/feed/update/{post_id}/" if post_id else None
+            ),
+        )
+
+    # -- SocialPublisher: engagement -------------------------------------
+
+    def get_engagement(self, access_token: str, platform_post_id: str) -> EngagementResult:
+        try:
+            with track_integration_call("linkedin", "get_engagement"):
+                response = httpx.get(
+                    f"{self.SOCIAL_METRICS_URL}/{platform_post_id}",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=self.timeout,
+                )
+                if response.status_code == 429:
+                    return EngagementResult(
+                        success=False,
+                        error="LinkedIn rate-limited this engagement request",
+                        rate_limited=True,
+                    )
+                response.raise_for_status()
+                data = response.json()
+        except Exception as exc:  # noqa: BLE001 - vendor/network errors become failures, not raises
+            return EngagementResult(success=False, error=str(exc))
+
+        return EngagementResult(
+            success=True,
+            metrics=EngagementMetrics(
+                likes=data.get("likes", 0),
+                comments=data.get("comments", 0),
+                shares=data.get("shares", 0),
+                impressions=data.get("impressions", 0),
             ),
         )
 

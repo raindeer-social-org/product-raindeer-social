@@ -35,6 +35,36 @@ class SocialOAuthProvider(ABC):
 
 
 @dataclass
+class EngagementMetrics:
+    """Cumulative engagement counts for a single published post, as
+    reported by the platform at the moment of the call — not deltas
+    since a previous poll. Deliberately a plain dataclass, same reasoning
+    as SocialTokens/PublishResult above: this package never depends on
+    apps.api, so the caller (#33's engagement_polling.py) is responsible
+    for turning this into an EngagementSnapshot row."""
+
+    likes: int
+    comments: int
+    shares: int
+    impressions: int
+
+
+@dataclass
+class EngagementResult:
+    """Returned by SocialPublisher.get_engagement()."""
+
+    success: bool
+    metrics: EngagementMetrics | None = None
+    error: str | None = None
+    # True when the failure was specifically the platform rate-limiting
+    # this call (e.g. HTTP 429) — lets the caller (engagement_polling.py)
+    # back off rather than hammer the platform, same "respect rate
+    # limits" acceptance criterion #31's publish queue already has to
+    # satisfy, without the caller having to string-match `error`.
+    rate_limited: bool = False
+
+
+@dataclass
 class PublishResult:
     """Returned by SocialPublisher.publish(). Like SocialTokens above,
     deliberately a plain dataclass (not tied to any ORM model) so this
@@ -76,4 +106,18 @@ class SocialPublisher(ABC):
         token, rejected content, network/HTTP error, a failed refresh) —
         those come back as PublishResult(success=False, error=...) so the
         caller doesn't need a try/except around every call site."""
+        ...
+
+    @abstractmethod
+    def get_engagement(self, access_token: str, platform_post_id: str) -> EngagementResult:
+        """Fetch current likes/comments/shares/impressions for a post this
+        adapter previously published (platform_post_id is exactly
+        PublishResult.platform_post_id from that publish() call). Like
+        publish(), never raises for an ordinary failure (bad token,
+        not-found post, network/HTTP error, rate limiting) — those come
+        back as EngagementResult(success=False, error=..., rate_limited=
+        ...) so the caller doesn't need a try/except around every call
+        site. Does not itself sleep/retry on a rate limit — see
+        EngagementResult.rate_limited's docstring for why that's the
+        caller's job."""
         ...
