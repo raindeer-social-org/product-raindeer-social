@@ -1,11 +1,13 @@
 from apps.api.models.agent_run import AgentRun, AgentType
 from apps.api.models.brand import Brand
+from apps.api.models.brand_report_chunk import BrandReportChunk
 from apps.api.models.content_calendar_event import (
     SUPPORTED_PLATFORMS,
     CalendarEventStatus,
     ContentCalendarEvent,
 )
 from apps.api.models.integration_call import IntegrationCall
+from apps.api.models.onboarding_research import OnboardingResearch
 from apps.api.models.onboarding_response import OnboardingResponse
 from apps.api.models.organization import Organization
 from apps.api.models.social_account import SocialAccount, SocialAccountStatus, SocialPlatform
@@ -16,9 +18,11 @@ __all__ = [
     "AgentRun",
     "AgentType",
     "Brand",
+    "BrandReportChunk",
     "CalendarEventStatus",
     "ContentCalendarEvent",
     "IntegrationCall",
+    "OnboardingResearch",
     "OnboardingResponse",
     "Organization",
     "SocialAccount",
