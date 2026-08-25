@@ -22,10 +22,15 @@ LLM-produced) creative brief's hook + CTA rather than raising.
 
 Also defines generate_media_stub(): the image/video-generation hook
 called (unconditionally, whenever a platform's brief calls for it) when a
-platform's `format` is image/video/carousel. Issues #22 (image) and #23
-(video) will replace/extend this stub with real adapters — this issue's
-job is only to guarantee the call site exists and is genuinely reached
-under the right conditions, not to build those adapters.
+platform's `format` is image/video/carousel. Issue #22 has replaced the
+`image` branch of this hook with a real fal.ai-backed adapter (through
+ImageProvider only — packages/integrations/registry.get_image_provider())
+plus storage (packages/integrations/registry.get_storage_provider()); the
+`video`/`carousel` branches remain the #21 stub for Issue #23 to extend.
+Same interface-only, degrade-on-failure contract as the rest of this
+module: an image-gen or storage failure is caught here and turned into a
+{"status": "failed", ...} result rather than propagating and taking the
+pipeline down with it.
 
 Output handling — Post.body_text with version history preserved:
   * Post.body_text (apps/api/models/post.py) is written with this run's
@@ -36,6 +41,10 @@ Output handling — Post.body_text with version history preserved:
     convention AgentRun already establishes — so regenerating a post's
     copy (e.g. after a human-review rejection) never loses the version
     that came before it.
+  * Post.media (added in #22) is written with this run's successfully
+    generated media, a list of {"platform", "format", "url"} dicts. Only
+    touched when this run actually produced new media — see Post.media's
+    own docstring in apps/api/models/post.py for why.
 
 AgentRun token/cost fields: run_pipeline (graph.py) already logs one
 AgentRun row per completed node generically, from whatever dict the node
@@ -60,6 +69,7 @@ import time
 import uuid
 from typing import Any
 
+import httpx
 from sqlalchemy.orm import Session
 
 from apps.api.config import get_settings
@@ -71,6 +81,10 @@ from packages.integrations.registry import (
     get_video_provider,
 )
 from packages.integrations.video_gen.base import VideoResult
+    get_image_provider,
+    get_llm_provider,
+    get_storage_provider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +179,75 @@ def generate_media_stub(post_id: str, platform: str, platform_brief: dict[str, A
     module's own LLM copy generation above), so a broken/unconfigured
     video provider never crashes the whole pipeline run."""
     fmt = str(platform_brief.get("format") or "")
+def _build_image_prompt(platform_brief: dict[str, Any]) -> str:
+    """Composes a fal.ai prompt straight from the creative brief's own
+    fields — same "no new invented content, just reshape what the brief
+    already decided" spirit as _fallback_copy_for below."""
+    angle = str(platform_brief.get("angle") or "").strip()
+    hook = str(platform_brief.get("hook") or "").strip()
+    tone = str(platform_brief.get("tone") or "").strip()
+    parts = [part for part in (hook, angle, tone) if part]
+    if parts:
+        return "Social media post image. " + "; ".join(parts)
+    return "Social media post image."
+
+
+def _download_image_bytes(url: str) -> tuple[bytes, str]:
+    """Fetches the generated image's bytes from the (temporary) URL the
+    ImageProvider returned, so it can be re-uploaded through
+    StorageProvider for durable hosting. A plain, vendor-agnostic GET
+    against whatever URL the interface handed back — not a fal.ai API
+    call, so it belongs here rather than inside fal_provider.py."""
+    response = httpx.get(url, timeout=30.0)
+    response.raise_for_status()
+    content_type = response.headers.get("content-type", "image/png").split(";")[0].strip()
+    return response.content, content_type
+
+
+def _generate_image_media(post_id: str, platform: str, platform_brief: dict[str, Any]) -> dict[str, Any]:
+    """The real (Issue #22) image branch of the media hook: calls
+    ImageProvider exclusively through its interface
+    (packages.integrations.registry.get_image_provider()) — never fal.ai's
+    HTTP API directly — then stores the result via StorageProvider
+    (packages.integrations.registry.get_storage_provider()), same
+    interface-only contract as every other adapter call in this pipeline.
+    Any failure (image-gen or storage) is caught and turned into a
+    {"status": "failed"} result instead of propagating, so a broken/
+    unconfigured image provider can't take the whole pipeline run down —
+    same degrade-on-failure contract as _generate_copy above."""
+    fmt = platform_brief.get("format")
+    try:
+        prompt = _build_image_prompt(platform_brief)
+        result = get_image_provider().generate(prompt=prompt)
+        content, content_type = _download_image_bytes(result.url)
+
+        extension = "png" if "png" in content_type else content_type.split("/")[-1] or "png"
+        path = f"generated/{post_id}/{platform}/{uuid.uuid4().hex}.{extension}"
+        stored_url = get_storage_provider().upload(path, content, content_type)
+    except Exception:
+        logger.warning(
+            "Generation Engine: image generation failed for post=%s platform=%s; "
+            "degrading gracefully (no media attached)",
+            post_id,
+            platform,
+            exc_info=True,
+        )
+        return {"status": "failed", "platform": platform, "format": fmt}
+
+    return {"status": "generated", "platform": platform, "format": fmt, "url": stored_url}
+
+
+def generate_media_stub(post_id: str, platform: str, platform_brief: dict[str, Any]) -> dict[str, Any]:
+    """Image/video-generation hook. For `image` formats this now calls the
+    real fal.ai-backed adapter (#22, see _generate_image_media above);
+    `video`/`carousel` formats still return the original #21 placeholder
+    below, left as the call site for #23 to replace/extend — this issue's
+    job is only the image branch, narrowly scoped so #23's eventual
+    rebase against this stays small."""
+    fmt = str(platform_brief.get("format", "")).lower()
+    if "image" in fmt:
+        return _generate_image_media(post_id, platform, platform_brief)
+
     logger.info(
         "Generation Engine: media hook called for post=%s platform=%s format=%r",
         post_id,
@@ -343,6 +426,17 @@ def _generation_output(db: Session, post: Post, creative_brief: dict[str, Any]) 
         merged_media = dict(post.media or {})
         merged_media.update(media_by_platform)
         post.media = merged_media
+    # Collect this run's successfully generated media (status="generated")
+    # onto Post.media — see Post.media's docstring (apps/api/models/post.py)
+    # for why a run that produced no new media leaves any prior media
+    # untouched rather than wiping it to null.
+    media_items = [
+        {"platform": platform, "format": result["media"]["format"], "url": result["media"]["url"]}
+        for platform, result in platform_results.items()
+        if result["media"] and result["media"].get("status") == "generated"
+    ]
+    if media_items:
+        post.media = media_items
 
     # Write the generated copy onto the Post itself, and append an
     # immutable version-history row (see module docstring) so a second

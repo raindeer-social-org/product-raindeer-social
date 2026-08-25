@@ -68,6 +68,17 @@ class Post(Base):
     # generation_engine.py) and simply leaves that platform's entry
     # unset/unchanged rather than writing a placeholder.
     media: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Written by the Generation Engine's media hook (Issue #22 — image;
+    # Issue #23 will extend this for video) — a JSONB list of media
+    # references produced by this Post's latest generation run, e.g.
+    # [{"platform": "linkedin", "format": "image", "url": "..."}]. Follows
+    # the same "written by the Generation Engine, always reflects the
+    # latest run" convention as body_text above; unlike body_text it is
+    # only touched when a run actually produces new media (a run with no
+    # image/video/carousel platforms, or one where generation failed,
+    # leaves any previously-generated media untouched rather than wiping
+    # it to null).
+    media: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

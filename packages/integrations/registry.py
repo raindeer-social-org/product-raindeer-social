@@ -1,6 +1,8 @@
 from apps.api.config import get_settings
 from packages.integrations.embedding.base import EmbeddingProvider
 from packages.integrations.embedding.openai_provider import OpenAIEmbeddingProvider
+from packages.integrations.image_gen.base import ImageProvider
+from packages.integrations.image_gen.fal_provider import FalImageProvider
 from packages.integrations.llm.base import LLMProvider
 from packages.integrations.llm.openai_provider import OpenAIProvider
 from packages.integrations.llm.openrouter_provider import OpenRouterProvider
@@ -45,6 +47,8 @@ _STORAGE_PROVIDERS = {
 
 _VIDEO_PROVIDERS = {
     "runway": lambda settings: RunwayProvider(api_key=settings.runway_api_key or ""),
+_IMAGE_PROVIDERS = {
+    "fal": lambda settings: FalImageProvider(api_key=settings.fal_api_key or ""),
 }
 
 
@@ -120,5 +124,13 @@ def get_video_provider() -> VideoProvider:
         raise ValueError(
             f"Unknown VIDEO_PROVIDER '{settings.video_provider}'. "
             f"Valid options: {sorted(_VIDEO_PROVIDERS)}"
+def get_image_provider() -> ImageProvider:
+    settings = get_settings()
+    try:
+        factory = _IMAGE_PROVIDERS[settings.image_provider]
+    except KeyError:
+        raise ValueError(
+            f"Unknown IMAGE_PROVIDER '{settings.image_provider}'. "
+            f"Valid options: {sorted(_IMAGE_PROVIDERS)}"
         ) from None
     return factory(settings)
