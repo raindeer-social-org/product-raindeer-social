@@ -1,4 +1,7 @@
+import hashlib
+import json
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
@@ -7,7 +10,8 @@ from apps.api.auth.dependencies import CurrentUser, get_current_user
 from apps.api.config.database import get_db
 from apps.api.middleware.rbac import require_role
 from apps.api.models import Brand, UserRole
-from apps.api.schemas.brand import BrandCreate, BrandRead, BrandUpdate
+from apps.api.schemas.brand import BrandCreate, BrandRead, BrandReportExport, BrandUpdate
+from apps.api.services.brand_report_pdf import render_brand_report_pdf
 from packages.integrations.registry import get_storage_provider
 
 router = APIRouter(prefix="/brands", tags=["brands"])
@@ -21,6 +25,20 @@ def _brand_logo_path(org_id: str, brand_id: uuid.UUID) -> str:
     # alone, and re-upload overwrites rather than accumulating orphans.
     # UUIDs, not incrementing ids — you can't guess another brand's path.
     return f"{org_id}/{brand_id}/logo"
+
+
+def _brand_report_pdf_path(org_id: str, brand_id: uuid.UUID, brand_report: dict) -> str:
+    # Content-hash-suffixed rather than a fixed name (unlike the logo path
+    # above): the acceptance criteria requires that re-exporting after a
+    # brand_report change produce an updated PDF, not one served stale
+    # from a cache at a URL that never changed. Hashing the report content
+    # means the URL only changes when the content does — same report
+    # re-exported twice reuses the same path (idempotent, no duplicate
+    # objects), a changed report always lands at a fresh URL.
+    digest = hashlib.sha256(
+        json.dumps(brand_report, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:16]
+    return f"{org_id}/{brand_id}/report-{digest}.pdf"
 
 
 def _get_org_brand(db: Session, brand_id: uuid.UUID, org_id: str) -> Brand:
@@ -130,3 +148,35 @@ def delete_brand_logo(
     db.flush()
     db.refresh(brand)
     return brand
+
+
+@router.post("/{brand_id}/report/export", response_model=BrandReportExport)
+def export_brand_report_pdf(
+    brand_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_role(*WRITE_ROLES)),
+) -> BrandReportExport:
+    brand = _get_org_brand(db, brand_id, current_user.org_id)
+    if not brand.brand_report:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Brand has no brand_report to export yet",
+        )
+
+    try:
+        pdf_bytes = render_brand_report_pdf(brand.name, brand.brand_report)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from None
+
+    path = _brand_report_pdf_path(current_user.org_id, brand_id, brand.brand_report)
+    storage = get_storage_provider()
+    url = storage.upload(path, pdf_bytes, "application/pdf")
+
+    brand.report_pdf_url = url
+    brand.report_pdf_generated_at = datetime.now(timezone.utc)
+    db.flush()
+    db.refresh(brand)
+
+    return BrandReportExport(url=url, generated_at=brand.report_pdf_generated_at)

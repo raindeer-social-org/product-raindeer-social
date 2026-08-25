@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     openrouter_api_key: str | None = None
     tavily_api_key: str | None = None
+    fal_api_key: str | None = None
 
     linkedin_client_id: str | None = None
     linkedin_client_secret: str | None = None
@@ -39,6 +40,7 @@ class Settings(BaseSettings):
     llm_provider: str = "openrouter"
     storage_provider: str = "supabase"
     embedding_provider: str = "openai"
+    image_provider: str = "fal"
 
     # OpenRouter's free-models router — swap for a paid model slug (e.g.
     # "anthropic/claude-sonnet-4.5") once quality/latency needs outgrow it.
@@ -51,6 +53,13 @@ class Settings(BaseSettings):
     supabase_storage_bucket: str = "brand-assets"
 
     sentry_dsn: str | None = None
+
+    # Issue #29: how far ahead of a ContentCalendarEvent's target_datetime
+    # (in minutes) the pipeline trigger job starts its pipeline run. Read
+    # by apps/api/worker.py's Celery Beat task; the actual selection logic
+    # in packages/agents/pipeline/trigger.py takes it as a plain argument
+    # so it stays unit-testable without touching Settings.
+    pipeline_trigger_lead_minutes: int = 60
 
 
 @lru_cache

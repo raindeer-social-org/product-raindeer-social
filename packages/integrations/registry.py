@@ -1,6 +1,8 @@
 from apps.api.config import get_settings
 from packages.integrations.embedding.base import EmbeddingProvider
 from packages.integrations.embedding.openai_provider import OpenAIEmbeddingProvider
+from packages.integrations.image_gen.base import ImageProvider
+from packages.integrations.image_gen.fal_provider import FalImageProvider
 from packages.integrations.llm.base import LLMProvider
 from packages.integrations.llm.openai_provider import OpenAIProvider
 from packages.integrations.llm.openrouter_provider import OpenRouterProvider
@@ -60,6 +62,10 @@ _STORAGE_PROVIDERS = {
         service_key=settings.supabase_service_key or "",
         bucket=settings.supabase_storage_bucket,
     ),
+}
+
+_IMAGE_PROVIDERS = {
+    "fal": lambda settings: FalImageProvider(api_key=settings.fal_api_key or ""),
 }
 
 
@@ -138,5 +144,17 @@ def get_storage_provider() -> StorageProvider:
         raise ValueError(
             f"Unknown STORAGE_PROVIDER '{settings.storage_provider}'. "
             f"Valid options: {sorted(_STORAGE_PROVIDERS)}"
+        ) from None
+    return factory(settings)
+
+
+def get_image_provider() -> ImageProvider:
+    settings = get_settings()
+    try:
+        factory = _IMAGE_PROVIDERS[settings.image_provider]
+    except KeyError:
+        raise ValueError(
+            f"Unknown IMAGE_PROVIDER '{settings.image_provider}'. "
+            f"Valid options: {sorted(_IMAGE_PROVIDERS)}"
         ) from None
     return factory(settings)
