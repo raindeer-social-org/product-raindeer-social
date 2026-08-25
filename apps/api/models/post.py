@@ -74,6 +74,18 @@ class Post(Base):
     # post is regenerated.
     body_text: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    # Written by the Generation Engine's media hook (Issue #22 — image;
+    # Issue #23 will extend this for video) — a JSONB list of media
+    # references produced by this Post's latest generation run, e.g.
+    # [{"platform": "linkedin", "format": "image", "url": "..."}]. Follows
+    # the same "written by the Generation Engine, always reflects the
+    # latest run" convention as body_text above; unlike body_text it is
+    # only touched when a run actually produces new media (a run with no
+    # image/video/carousel platforms, or one where generation failed,
+    # leaves any previously-generated media untouched rather than wiping
+    # it to null).
+    media: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
     # Written by the publish queue (Issue #31,
     # apps/api/services/publish_queue.py) — per-platform outcome of the
     # most recent publish attempt, e.g. {"linkedin": {"status":

@@ -32,6 +32,16 @@ class Brand(Base):
     # RAG retrieval embedding of brand_report (Issue #16) — unpopulated until then.
     report_embedding: Mapped[list | None] = mapped_column(Vector(1536), nullable=True)
 
+    # Latest rendered PDF export of brand_report (Issue #17). The path is
+    # content-hash-suffixed (see brand_report_pdf_path in
+    # apps/api/routers/brands.py), so an export after a brand_report
+    # change always lands at a new URL rather than overwriting — these two
+    # columns just point at the most recent one.
+    report_pdf_url: Mapped[str | None] = mapped_column(nullable=True)
+    report_pdf_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
