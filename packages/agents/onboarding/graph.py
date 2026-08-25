@@ -5,6 +5,7 @@ from typing import TypedDict
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.orm import Session
 
+from apps.api.config import get_settings
 from apps.api.models.agent_run import AgentRun, AgentType
 from apps.api.models.brand import Brand
 from apps.api.models.onboarding_research import OnboardingResearch
@@ -12,9 +13,11 @@ from apps.api.models.onboarding_response import OnboardingResponse
 from packages.agents.onboarding.prompts import REQUIRED_REPORT_KEYS, build_synthesis_prompt
 from packages.integrations.registry import get_llm_provider
 
-# OpenRouter model slug — free to swap since LLMProvider (#7) is
-# model-agnostic per-call; this is just this agent's default.
-LLM_MODEL = "anthropic/claude-sonnet-4.5"
+
+def _default_model() -> str:
+    """Reads LLM_DEFAULT_MODEL fresh on every call (not a module constant)
+    so tests and per-environment overrides take effect without a reimport."""
+    return get_settings().llm_default_model
 
 
 class OnboardingSynthesisError(Exception):
@@ -56,7 +59,7 @@ def _parse_report(text: str) -> dict:
 
 def _synthesize_node(state: _GraphState) -> dict:
     llm = get_llm_provider()
-    response = llm.complete(prompt=state["prompt"], model=LLM_MODEL, temperature=0.4)
+    response = llm.complete(prompt=state["prompt"], model=_default_model(), temperature=0.4)
     report = _parse_report(response.text)
     return {
         "llm_text": response.text,
@@ -114,7 +117,7 @@ def run_onboarding_agent(
                 agent_type=AgentType.ONBOARDING,
                 input={"brand_id": str(brand.id)},
                 output=result_state.get("brand_report") if result_state else None,
-                model=result_state.get("model") if result_state else LLM_MODEL,
+                model=result_state.get("model") if result_state else _default_model(),
                 tokens=result_state.get("tokens") if result_state else None,
                 latency_ms=latency_ms,
             )
