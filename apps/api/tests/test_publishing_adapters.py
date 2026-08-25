@@ -575,3 +575,128 @@ def test_x_publish_hard_failure_logged(db_session) -> None:
     assert logged is not None
     assert logged.success is False
     assert logged.error_message is not None
+
+
+# ---------------------------------------------------------------------
+# Issue #33: get_engagement() — same "never raises, caller decides"
+# shape as publish() above, exercised here for the same reason XProvider's
+# OAuth/publish methods are: this is the only file allowed to build these
+# adapters, so their real HTTP behavior belongs in this test module.
+# ---------------------------------------------------------------------
+
+
+def test_linkedin_get_engagement_success_returns_metrics(db_session) -> None:
+    provider = LinkedInProvider(client_id="cid", client_secret="secret")
+
+    with patch(
+        "httpx.get",
+        return_value=_mock_response({"likes": 10, "comments": 2, "shares": 1, "impressions": 500}),
+    ):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="123")
+
+    assert result.success is True
+    assert result.rate_limited is False
+    assert result.metrics.likes == 10
+    assert result.metrics.comments == 2
+    assert result.metrics.shares == 1
+    assert result.metrics.impressions == 500
+
+
+def test_linkedin_get_engagement_logs_integration_call(db_session) -> None:
+    provider = LinkedInProvider(client_id="cid", client_secret="secret")
+
+    with patch(
+        "httpx.get", return_value=_mock_response({"likes": 1, "comments": 0, "shares": 0, "impressions": 5})
+    ):
+        provider.get_engagement(access_token="good-token", platform_post_id="123")
+
+    logged = (
+        db_session.query(IntegrationCall)
+        .filter_by(provider="linkedin", capability="get_engagement")
+        .order_by(IntegrationCall.created_at.desc())
+        .first()
+    )
+    assert logged is not None
+    assert logged.success is True
+
+
+def test_linkedin_get_engagement_rate_limited_returns_flag_not_raise(db_session) -> None:
+    provider = LinkedInProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=429)):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="123")
+
+    assert result.success is False
+    assert result.rate_limited is True
+    assert result.metrics is None
+
+
+def test_linkedin_get_engagement_hard_http_failure_returns_failed_result(db_session) -> None:
+    provider = LinkedInProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=500)):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="123")
+
+    assert result.success is False
+    assert result.rate_limited is False
+    assert result.error is not None
+
+
+def test_x_get_engagement_success_returns_metrics(db_session) -> None:
+    provider = XProvider(client_id="cid", client_secret="secret")
+
+    with patch(
+        "httpx.get",
+        return_value=_mock_response(
+            {
+                "data": {
+                    "id": "999",
+                    "public_metrics": {
+                        "like_count": 8,
+                        "reply_count": 3,
+                        "retweet_count": 2,
+                        "impression_count": 300,
+                    },
+                }
+            }
+        ),
+    ):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="999")
+
+    assert result.success is True
+    assert result.metrics.likes == 8
+    assert result.metrics.comments == 3
+    assert result.metrics.shares == 2
+    assert result.metrics.impressions == 300
+
+
+def test_x_get_engagement_rate_limited_returns_flag_not_raise(db_session) -> None:
+    provider = XProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=429)):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="999")
+
+    assert result.success is False
+    assert result.rate_limited is True
+    assert result.metrics is None
+
+
+def test_x_get_engagement_logs_integration_call(db_session) -> None:
+    provider = XProvider(client_id="cid", client_secret="secret")
+
+    with patch(
+        "httpx.get",
+        return_value=_mock_response(
+            {"data": {"id": "1", "public_metrics": {"like_count": 1, "reply_count": 0, "retweet_count": 0, "impression_count": 1}}}
+        ),
+    ):
+        provider.get_engagement(access_token="good-token", platform_post_id="999")
+
+    logged = (
+        db_session.query(IntegrationCall)
+        .filter_by(provider="x", capability="get_engagement")
+        .order_by(IntegrationCall.created_at.desc())
+        .first()
+    )
+    assert logged is not None
+    assert logged.success is True

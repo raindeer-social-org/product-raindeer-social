@@ -6,6 +6,8 @@ import httpx
 
 from packages.integrations.observability import track_integration_call
 from packages.integrations.social.base import (
+    EngagementMetrics,
+    EngagementResult,
     PublishResult,
     SocialOAuthProvider,
     SocialPublisher,
@@ -183,6 +185,38 @@ class XProvider(SocialOAuthProvider, SocialPublisher):
             success=True,
             platform_post_id=post_id,
             platform_post_url=f"https://x.com/i/web/status/{post_id}" if post_id else None,
+        )
+
+    # -- SocialPublisher: engagement ---------------------------------------
+
+    def get_engagement(self, access_token: str, platform_post_id: str) -> EngagementResult:
+        try:
+            with track_integration_call("x", "get_engagement"):
+                response = httpx.get(
+                    f"{self.TWEETS_URL}/{platform_post_id}",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params={"tweet.fields": "public_metrics"},
+                    timeout=self.timeout,
+                )
+                if response.status_code == 429:
+                    return EngagementResult(
+                        success=False,
+                        error="X rate-limited this engagement request",
+                        rate_limited=True,
+                    )
+                response.raise_for_status()
+                metrics = response.json().get("data", {}).get("public_metrics", {})
+        except Exception as exc:  # noqa: BLE001 - vendor/network errors become failures, not raises
+            return EngagementResult(success=False, error=str(exc))
+
+        return EngagementResult(
+            success=True,
+            metrics=EngagementMetrics(
+                likes=metrics.get("like_count", 0),
+                comments=metrics.get("reply_count", 0),
+                shares=metrics.get("retweet_count", 0),
+                impressions=metrics.get("impression_count", 0),
+            ),
         )
 
     def _refresh_access_token(self, refresh_token: str) -> SocialTokens:

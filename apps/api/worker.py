@@ -5,7 +5,7 @@ from celery import Celery, Task
 
 from apps.api.config import get_settings
 from apps.api.config.database import SessionLocal
-from apps.api.services import publish_queue
+from apps.api.services import engagement_polling, publish_queue
 
 settings = get_settings()
 
@@ -15,6 +15,25 @@ celery_app = Celery(
     backend=settings.redis_url,
 )
 celery_app.conf.broker_connection_retry_on_startup = True
+
+# Issue #33: on a recurring schedule, poll engagement metrics for every
+# published post's platform(s) and append an EngagementSnapshot row per
+# poll. Runs every 15 minutes — frequent enough to build a meaningful
+# time series without hammering the platform APIs (see
+# ENGAGEMENT_POLL_INTERVAL_SECONDS below and
+# apps/api/services/engagement_polling.py's module docstring for the
+# rate-limit story). The actual selection/fetch/snapshot logic lives in
+# that module, not here, so it's unit-testable without any Celery
+# machinery — same split #29's beat_schedule (pipeline trigger) and #31's
+# publish queue already use.
+ENGAGEMENT_POLL_INTERVAL_SECONDS = 900.0
+
+celery_app.conf.beat_schedule = {
+    "poll-engagement": {
+        "task": "worker.poll_engagement",
+        "schedule": ENGAGEMENT_POLL_INTERVAL_SECONDS,
+    },
+}
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +46,15 @@ logger = logging.getLogger(__name__)
 PUBLISH_MAX_RETRIES = 5
 PUBLISH_RETRY_BACKOFF_BASE = 30
 PUBLISH_RETRY_BACKOFF_MAX = 600
+
+# Issue #33's "rate limits must be respected" acceptance criterion, same
+# mechanism and same reasoning as PUBLISH_* above: a rate-limited (or any
+# other failed) engagement fetch raises EngagementPollFailed, and this is
+# the cap/backoff schedule Celery retries it with, rather than a
+# hand-rolled retry loop.
+ENGAGEMENT_MAX_RETRIES = 5
+ENGAGEMENT_RETRY_BACKOFF_BASE = 30
+ENGAGEMENT_RETRY_BACKOFF_MAX = 600
 
 
 @celery_app.task(name="worker.ping")
@@ -100,6 +128,70 @@ def publish_post_task(post_id: str) -> None:
         # results/error onto the Post — commit that before propagating,
         # so it's visible even while retries are still in flight, then
         # let autoretry_for's wrapping catch this and schedule the retry.
+        db.commit()
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@celery_app.task(name="worker.poll_engagement")
+def poll_engagement_task() -> int:
+    """Celery Beat entrypoint for Issue #33's engagement polling sweep.
+
+    A thin wrapper, same shape as #29's trigger_due_pipelines_task:
+    figures out which posts are due for a poll
+    (engagement_polling.find_posts_due_for_polling — no Celery machinery
+    needed for that query), then fans out one poll_post_engagement_task
+    per post rather than polling all of them inline in this single task.
+    That fan-out means one post's platform being rate-limited (and
+    therefore retried with backoff, see poll_post_engagement_task below)
+    never delays or blocks polling any other post in the same sweep.
+    Returns the number of posts a poll was enqueued for.
+    """
+    db = SessionLocal()
+    try:
+        post_ids = engagement_polling.find_posts_due_for_polling(db)
+    finally:
+        db.close()
+
+    for post_id in post_ids:
+        poll_post_engagement_task.delay(str(post_id))
+    return len(post_ids)
+
+
+@celery_app.task(
+    name="worker.poll_post_engagement",
+    autoretry_for=(engagement_polling.EngagementPollFailed,),
+    retry_backoff=ENGAGEMENT_RETRY_BACKOFF_BASE,
+    retry_backoff_max=ENGAGEMENT_RETRY_BACKOFF_MAX,
+    retry_jitter=True,
+    max_retries=ENGAGEMENT_MAX_RETRIES,
+)
+def poll_post_engagement_task(post_id: str) -> None:
+    """The actual per-post engagement poll Issue #33 asks for —
+    deliberately thin, same split as publish_post_task above. All the
+    real logic (resolving published platforms, calling #30's
+    SocialPublisher.get_engagement() adapters, writing EngagementSnapshot
+    rows) lives in apps/api/services/engagement_polling.py, kept
+    import-free of Celery so it stays unit-testable without any
+    Celery/Redis machinery running. This wrapper's only job is to give
+    that logic Celery's exponential-backoff-retry machinery —
+    autoretry_for/retry_backoff — so a rate-limited (or otherwise failed)
+    platform fetch is backed off and retried later rather than hammered
+    or left to crash the whole sweep.
+    """
+    db = SessionLocal()
+    try:
+        engagement_polling.poll_post_engagement(db, uuid.UUID(post_id))
+        db.commit()
+    except engagement_polling.EngagementPollFailed:
+        # poll_post_engagement already committed a snapshot row for every
+        # platform that succeeded on this attempt — commit that before
+        # propagating, then let autoretry_for's wrapping catch this and
+        # schedule the retry.
         db.commit()
         raise
     except Exception:
