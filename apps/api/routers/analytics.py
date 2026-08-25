@@ -7,12 +7,15 @@ from sqlalchemy.orm import Session
 from apps.api.auth.dependencies import CurrentUser, get_current_user
 from apps.api.config.database import get_db
 from apps.api.models import Brand, Post
+from apps.api.models.report import Report
 from apps.api.schemas.analytics import (
     BrandAnalyticsSummary,
     EngagementSnapshotPoint,
     PlatformAggregate,
     PostAnalyticsAggregate,
     PostAnalyticsTrend,
+    ReportListOut,
+    ReportOut,
 )
 from apps.api.services import analytics_aggregation
 
@@ -21,6 +24,12 @@ router = APIRouter(prefix="/brands/{brand_id}/analytics", tags=["analytics"])
 # Same default window used across the dashboard/report if a caller doesn't
 # specify one — recent enough to be useful, wide enough to show a trend.
 DEFAULT_WINDOW_DAYS = 30
+
+# Cap on how many past weekly reports a single list call returns — a
+# brand accumulates one row per week indefinitely (Issue #35's Report is
+# an append-only log, apps/api/models/report.py), so this keeps the
+# default response bounded without needing full pagination yet.
+DEFAULT_REPORT_LIMIT = 20
 
 
 def _get_org_brand(db: Session, brand_id: uuid.UUID, org_id: str) -> Brand:
@@ -34,6 +43,20 @@ def _get_org_brand(db: Session, brand_id: uuid.UUID, org_id: str) -> Brand:
         # another org.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Brand not found")
     return brand
+
+
+def _to_report_out(report: Report) -> ReportOut:
+    return ReportOut(
+        id=str(report.id),
+        brand_id=str(report.brand_id),
+        period_start=report.period_start,
+        period_end=report.period_end,
+        summary=report.summary,
+        recommendations=report.recommendations,
+        metrics=report.metrics,
+        model=report.model,
+        created_at=report.created_at,
+    )
 
 
 def _get_brand_post_or_404(db: Session, brand_id: uuid.UUID, post_id: uuid.UUID) -> Post:
@@ -164,3 +187,53 @@ def get_post_trend(
             for p in points
         ],
     )
+
+
+@router.get("/reports", response_model=ReportListOut)
+def list_reports(
+    brand_id: uuid.UUID,
+    limit: int = Query(DEFAULT_REPORT_LIMIT, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ReportListOut:
+    """Issue #35: read back this brand's weekly AI-generated reports,
+    newest first. Reports are appended by
+    packages/agents/reporting/weekly_report.py (run on a schedule via
+    apps/api/worker.py's generate-weekly-reports Celery Beat entry) — this
+    endpoint is a plain read of that log, same org/brand-scoping (404,
+    not 403, on cross-org access) as every other endpoint in this
+    router."""
+    _get_org_brand(db, brand_id, current_user.org_id)
+
+    reports = (
+        db.query(Report)
+        .filter(Report.brand_id == brand_id)
+        .order_by(Report.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return ReportListOut(
+        brand_id=str(brand_id), reports=[_to_report_out(report) for report in reports]
+    )
+
+
+@router.get("/reports/{report_id}", response_model=ReportOut)
+def get_report(
+    brand_id: uuid.UUID,
+    report_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ReportOut:
+    _get_org_brand(db, brand_id, current_user.org_id)
+
+    report = (
+        db.query(Report)
+        .filter(Report.id == report_id, Report.brand_id == brand_id)
+        .first()
+    )
+    if report is None:
+        # 404, not 403 — same convention as _get_org_brand/
+        # _get_brand_post_or_404 above: don't leak whether a report with
+        # this id exists under a different brand/org.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+    return _to_report_out(report)

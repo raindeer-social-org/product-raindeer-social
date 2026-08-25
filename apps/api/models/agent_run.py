@@ -21,6 +21,15 @@ class AgentType(str, enum.Enum):
     SCHEDULER = "scheduler"
     PUBLISHER = "publisher"
     ANALYTICS_COLLECTOR = "analytics_collector"
+    # Issue #35: the weekly per-brand AI report generation job
+    # (packages/agents/reporting/weekly_report.py). Not a pipeline stage —
+    # runs on its own Celery Beat schedule (apps/api/worker.py) over every
+    # brand rather than once per Post, so AgentRun.post_id is left null
+    # for these rows (brand_id lives in `input` instead — see that
+    # module's docstring for why, same reasoning
+    # scheduling_suggestion.py's research-lookup already established for
+    # a service that isn't a pipeline node).
+    WEEKLY_REPORT = "weekly_report"
 
 
 class AgentRun(Base):

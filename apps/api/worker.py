@@ -5,8 +5,10 @@ from celery import Celery, Task
 
 from apps.api.config import get_settings
 from apps.api.config.database import SessionLocal
+from apps.api.models.brand import Brand
 from apps.api.services import engagement_polling, publish_queue
 from packages.agents.pipeline.trigger import trigger_due_pipelines
+from packages.agents.reporting.weekly_report import generate_weekly_report
 
 settings = get_settings()
 
@@ -29,6 +31,16 @@ celery_app.conf.broker_connection_retry_on_startup = True
 # publish queue already use.
 ENGAGEMENT_POLL_INTERVAL_SECONDS = 900.0
 
+# Issue #35: on a recurring weekly schedule, generate an AI report per
+# brand from the past week's #34 analytics aggregates. A flat 7-day
+# interval in seconds — same simple "float seconds, not a crontab" shape
+# ENGAGEMENT_POLL_INTERVAL_SECONDS/trigger-due-pipelines already use in
+# this schedule, rather than pinning it to a specific calendar day/time.
+# The actual selection/generation logic lives in
+# packages/agents/reporting/weekly_report.py, not here, so it's
+# unit-testable without any Celery machinery.
+WEEKLY_REPORT_INTERVAL_SECONDS = 7 * 24 * 60 * 60.0
+
 # Issue #29: on a recurring schedule, poll ContentCalendarEvent for events
 # approaching their target_datetime and start the #18 pipeline for each.
 # Runs every minute — frequent enough that Settings.pipeline_trigger_lead_
@@ -45,6 +57,10 @@ celery_app.conf.beat_schedule = {
     "poll-engagement": {
         "task": "worker.poll_engagement",
         "schedule": ENGAGEMENT_POLL_INTERVAL_SECONDS,
+    },
+    "generate-weekly-reports": {
+        "task": "worker.generate_weekly_reports",
+        "schedule": WEEKLY_REPORT_INTERVAL_SECONDS,
     },
 }
 
@@ -207,6 +223,54 @@ def poll_post_engagement_task(post_id: str) -> None:
         # schedule the retry.
         db.commit()
         raise
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@celery_app.task(name="worker.generate_weekly_reports")
+def generate_weekly_reports_task() -> int:
+    """Celery Beat entrypoint for Issue #35's weekly report generation.
+
+    Same fan-out shape as poll_engagement_task above: this sweep only
+    resolves which brands exist, then hands each one off to
+    generate_weekly_report_task individually, so one brand's LLM call
+    failing (or being slow) never delays or blocks another brand's
+    report. (generate_weekly_report itself also degrades gracefully on
+    an LLM failure rather than raising — see
+    packages/agents/reporting/weekly_report.py — so this per-brand task
+    only needs to handle the "brand vanished mid-sweep" case, not
+    transient LLM errors.) Returns the number of brands a report
+    generation was enqueued for.
+    """
+    db = SessionLocal()
+    try:
+        brand_ids = [row[0] for row in db.query(Brand.id).all()]
+    finally:
+        db.close()
+
+    for brand_id in brand_ids:
+        generate_weekly_report_task.delay(str(brand_id))
+    return len(brand_ids)
+
+
+@celery_app.task(name="worker.generate_weekly_report")
+def generate_weekly_report_task(brand_id: str) -> None:
+    """The actual per-brand weekly report Celery task Issue #35 asks for
+    — deliberately thin, same split as publish_post_task/
+    poll_post_engagement_task above. All the real logic (pulling #34's
+    analytics aggregates, calling LLMProvider, persisting the Report row,
+    logging the AgentRun) lives in
+    packages/agents/reporting/weekly_report.py, kept import-free of
+    Celery so it stays unit-testable without any Celery/Redis machinery
+    running.
+    """
+    db = SessionLocal()
+    try:
+        generate_weekly_report(db, uuid.UUID(brand_id))
+        db.commit()
     except Exception:
         db.rollback()
         raise

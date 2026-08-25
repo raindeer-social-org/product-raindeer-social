@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -68,3 +69,28 @@ class PostAnalyticsTrend(BaseModel):
     start_date: datetime
     end_date: datetime
     points: list[EngagementSnapshotPoint]
+
+
+class ReportOut(BaseModel):
+    """One weekly AI-generated report (Issue #35) — an immutable row, so
+    unlike the aggregate endpoints above (which recompute live) this is
+    just a read of what packages/agents/reporting/weekly_report.py
+    already generated and stored. `metrics` is the exact
+    analytics_aggregation.BrandSummary the report was generated from, so
+    a caller can verify `summary`/`recommendations` against real
+    numbers."""
+
+    id: str
+    brand_id: str
+    period_start: datetime
+    period_end: datetime
+    summary: str
+    recommendations: list[Any]
+    metrics: dict[str, Any]
+    model: str | None
+    created_at: datetime
+
+
+class ReportListOut(BaseModel):
+    brand_id: str
+    reports: list[ReportOut]

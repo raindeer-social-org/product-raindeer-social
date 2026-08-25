@@ -13,6 +13,7 @@ from apps.api.models.onboarding_response import OnboardingResponse
 from apps.api.models.organization import Organization
 from apps.api.models.post import PipelineStage, Post
 from apps.api.models.post_version import PostVersion
+from apps.api.models.report import Report
 from apps.api.models.review_feedback import ReviewFeedback, ReviewSource, ReviewVerdict
 from apps.api.models.social_account import SocialAccount, SocialAccountStatus, SocialPlatform
 from apps.api.models.user import User, UserRole
@@ -33,6 +34,7 @@ __all__ = [
     "PipelineStage",
     "Post",
     "PostVersion",
+    "Report",
     "ReviewFeedback",
     "ReviewSource",
     "ReviewVerdict",
