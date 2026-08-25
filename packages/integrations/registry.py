@@ -8,8 +8,9 @@ from packages.integrations.llm.openai_provider import OpenAIProvider
 from packages.integrations.llm.openrouter_provider import OpenRouterProvider
 from packages.integrations.search.base import SearchProvider
 from packages.integrations.search.tavily import TavilyProvider
-from packages.integrations.social.base import SocialOAuthProvider
+from packages.integrations.social.base import SocialOAuthProvider, SocialPublisher
 from packages.integrations.social.linkedin_provider import LinkedInProvider
+from packages.integrations.social.x_provider import XProvider
 from packages.integrations.storage.base import StorageProvider
 from packages.integrations.storage.supabase_provider import SupabaseStorageProvider
 
@@ -32,6 +33,26 @@ _SOCIAL_OAUTH_PROVIDERS = {
     "linkedin": lambda settings: LinkedInProvider(
         client_id=settings.linkedin_client_id or "",
         client_secret=settings.linkedin_client_secret or "",
+    ),
+    "x": lambda settings: XProvider(
+        client_id=settings.x_client_id or "",
+        client_secret=settings.x_client_secret or "",
+    ),
+}
+
+# Every publisher is currently the same adapter instance that also
+# implements SocialOAuthProvider for its platform (one class, two
+# interfaces) — kept as a separate registry/lookup function anyway so
+# callers (the #31 publish queue) depend only on SocialPublisher, not on
+# the OAuth-connection interface.
+_SOCIAL_PUBLISHERS = {
+    "linkedin": lambda settings: LinkedInProvider(
+        client_id=settings.linkedin_client_id or "",
+        client_secret=settings.linkedin_client_secret or "",
+    ),
+    "x": lambda settings: XProvider(
+        client_id=settings.x_client_id or "",
+        client_secret=settings.x_client_secret or "",
     ),
 }
 
@@ -96,6 +117,21 @@ def get_social_oauth_provider(platform: str) -> SocialOAuthProvider:
         raise ValueError(
             f"Unknown social platform '{platform}'. "
             f"Valid options: {sorted(_SOCIAL_OAUTH_PROVIDERS)}"
+        ) from None
+    return factory(settings)
+
+
+def get_social_publisher(platform: str) -> SocialPublisher:
+    # Same one-per-platform shape as get_social_oauth_provider above, and
+    # for the same reason: a brand publishes to every platform it's
+    # connected, not just one selected via settings.
+    settings = get_settings()
+    try:
+        factory = _SOCIAL_PUBLISHERS[platform]
+    except KeyError:
+        raise ValueError(
+            f"Unknown social platform '{platform}'. "
+            f"Valid options: {sorted(_SOCIAL_PUBLISHERS)}"
         ) from None
     return factory(settings)
 
