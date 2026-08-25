@@ -37,5 +37,12 @@ class BrandRead(BaseModel):
     tone_descriptors: list[str] | None
     product_catalog: dict | None
     brand_report: dict | None
+    report_pdf_url: str | None
+    report_pdf_generated_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class BrandReportExport(BaseModel):
+    url: str
+    generated_at: datetime
