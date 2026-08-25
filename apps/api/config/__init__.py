@@ -45,6 +45,13 @@ class Settings(BaseSettings):
 
     sentry_dsn: str | None = None
 
+    # Issue #29: how far ahead of a ContentCalendarEvent's target_datetime
+    # (in minutes) the pipeline trigger job starts its pipeline run. Read
+    # by apps/api/worker.py's Celery Beat task; the actual selection logic
+    # in packages/agents/pipeline/trigger.py takes it as a plain argument
+    # so it stays unit-testable without touching Settings.
+    pipeline_trigger_lead_minutes: int = 60
+
 
 @lru_cache
 def get_settings() -> Settings:
