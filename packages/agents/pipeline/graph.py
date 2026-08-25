@@ -45,6 +45,7 @@ from sqlalchemy.orm import Session
 
 from apps.api.models.agent_run import AgentRun, AgentType
 from apps.api.models.post import PipelineStage, Post
+from apps.api.services.notifications import notify_ready_for_review
 from apps.api.services.publish_queue import enqueue_publish
 from packages.agents.pipeline.nodes.creative_engine import build_creative_node
 from packages.agents.pipeline.nodes.generation_engine import build_generation_node
@@ -334,7 +335,21 @@ def run_pipeline(
     # finished and handed off to it.
     state = graph.get_state(config)
     if state.next:
-        post.current_pipeline_stage = STAGE_TO_PIPELINE_STAGE[state.next[0]]
+        new_stage = STAGE_TO_PIPELINE_STAGE[state.next[0]]
+        # Issue #32's second trigger: a post *reaching* ready_for_review,
+        # not merely still sitting there. Guarded on the stage actually
+        # changing so a caller that re-invokes run_pipeline while a post
+        # is already paused at human_review (e.g. without a resume value)
+        # can't re-fire the notification every time. notify_ready_for_review
+        # never raises (see apps/api/services/notifications.py), so this
+        # can't turn a successful pipeline step into a failed one.
+        reached_human_review = (
+            new_stage == PipelineStage.HUMAN_REVIEW
+            and post.current_pipeline_stage != PipelineStage.HUMAN_REVIEW
+        )
+        if reached_human_review:
+            notify_ready_for_review(db, post)
+        post.current_pipeline_stage = new_stage
     elif _decision_action(state.values.get("human_review_decision")) == "rejected":
         # Reached END via _route_after_human_review's reject branch, not
         # by running the full pipeline to Analytics Collector — COMPLETED
