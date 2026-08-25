@@ -20,7 +20,11 @@ class CalendarEventCreate(BaseModel):
     description: str | None = None
     target_platforms: list[str]
     desired_format: str
-    target_datetime: datetime
+    # Optional (#28): when omitted, the create-event endpoint calls
+    # apps/api/services/scheduling_suggestion.py to propose one from the
+    # brand's most recent research brief. An explicitly provided value
+    # here always wins — the suggestion is never applied over it.
+    target_datetime: datetime | None = None
 
     @field_validator("target_platforms")
     @classmethod

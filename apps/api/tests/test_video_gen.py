@@ -54,6 +54,7 @@ from packages.integrations.video_gen.runway_provider import RunwayProvider
 LLM_PATCH_TARGET = "packages.agents.pipeline.nodes.generation_engine.get_llm_provider"
 VIDEO_PATCH_TARGET = "packages.agents.pipeline.nodes.generation_engine.get_video_provider"
 STORAGE_PATCH_TARGET = "packages.agents.pipeline.nodes.generation_engine.get_storage_provider"
+IMAGE_PATCH_TARGET = "packages.agents.pipeline.nodes.generation_engine.get_image_provider"
 CREATIVE_LLM_PATCH_TARGET = "packages.agents.pipeline.nodes.creative_engine.get_llm_provider"
 SEARCH_PATCH_TARGET = "packages.agents.pipeline.nodes.research_engine.get_search_provider"
 EMBED_PATCH_TARGET = "apps.api.services.brand_retrieval.get_embedding_provider"
@@ -364,17 +365,13 @@ def test_video_format_generates_stores_and_links_to_post_media(db_session) -> No
     assert upload_call.args[2] == "video/mp4"
 
     db_session.refresh(post)
-    assert post.media == {
-        "linkedin": [
-            {
-                "status": "generated",
-                "platform": "linkedin",
-                "format": "short_video",
-                "url": "https://cdn.example/generated/linkedin.mp4",
-            }
-        ]
-    }
-    assert "x" not in post.media
+    # Post.media is a JSONB *list* of {"platform", "format", "url"} dicts
+    # (the shape #22's already-merged model/migration established) — not
+    # a dict keyed by platform. Only platforms whose media actually
+    # generated get an entry; "x" (text_post, no media) gets none.
+    assert post.media == [
+        {"platform": "linkedin", "format": "short_video", "url": "https://cdn.example/generated/linkedin.mp4"},
+    ]
 
     media_out = result["generation_output"]["platforms"]["linkedin"]["media"]
     assert media_out["status"] == "generated"
@@ -400,23 +397,39 @@ def test_carousel_format_also_uses_video_provider(db_session) -> None:
 
     mock_video.return_value.generate.assert_called_once()
     db_session.refresh(post)
-    assert post.media["linkedin"][0]["url"] == "https://cdn.example/generated/linkedin-carousel.mp4"
+    assert post.media == [
+        {"platform": "linkedin", "format": "carousel", "url": "https://cdn.example/generated/linkedin-carousel.mp4"},
+    ]
 
 
-def test_image_format_still_stubbed_not_wired_to_video_provider(db_session) -> None:
-    """Sanity check that this issue's changes stayed narrowly scoped to
-    video/carousel -- image formats aren't this issue's job (#22)."""
+def test_image_format_routes_to_image_provider_not_video_provider(db_session) -> None:
+    """Issue #22 wired the image branch to a real ImageProvider adapter
+    (fal.ai) on its own concurrent PR — this asserts the combined
+    dispatch (generate_media_stub) routes correctly: image formats hit
+    ImageProvider, never VideoProvider, and vice versa (covered by the
+    video/carousel tests above)."""
     post = _setup_post(db_session)
     brief = _creative_brief(linkedin_format="image", x_format="text_post")
 
-    with patch(LLM_PATCH_TARGET) as mock_llm, patch(VIDEO_PATCH_TARGET) as mock_video:
+    with (
+        patch(LLM_PATCH_TARGET) as mock_llm,
+        patch(VIDEO_PATCH_TARGET) as mock_video,
+        patch(IMAGE_PATCH_TARGET) as mock_image,
+        patch(STORAGE_PATCH_TARGET) as mock_storage,
+    ):
         mock_llm.return_value.complete.return_value = _llm_response(_copy_payload())
-        result = _run_node(db_session, post, brief)
+        mock_image.return_value.generate.return_value = MagicMock(url="https://fal.example/out.png")
+        mock_storage.return_value.upload.return_value = "https://cdn.example/generated/linkedin.png"
+
+        with patch(
+            "packages.agents.pipeline.nodes.generation_engine._download_image_bytes",
+            return_value=(b"fake-bytes", "image/png"),
+        ):
+            result = _run_node(db_session, post, brief)
 
     mock_video.return_value.generate.assert_not_called()
-    assert result["generation_output"]["platforms"]["linkedin"]["media"]["status"] == "stubbed"
-    db_session.refresh(post)
-    assert post.media is None
+    mock_image.return_value.generate.assert_called_once()
+    assert result["generation_output"]["platforms"]["linkedin"]["media"]["status"] == "generated"
 
 
 def test_generate_media_stub_direct_call_video_format_uses_interface(db_session) -> None:

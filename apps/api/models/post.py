@@ -24,6 +24,13 @@ class PipelineStage(str, enum.Enum):
     PUBLISHER = "publisher"
     ANALYTICS_COLLECTOR = "analytics_collector"
     COMPLETED = "completed"
+    # Terminal state for a run a human explicitly rejected at the
+    # human_review interrupt (Issue #25) — distinct from COMPLETED, which
+    # implies the post made it all the way through Publisher/Analytics
+    # Collector. graph.py routes human_review straight to END instead of
+    # scheduler when the resumed decision is "rejected", so a rejected
+    # post never reaches those later stages.
+    REJECTED = "rejected"
 
 
 class Post(Base):
@@ -57,27 +64,17 @@ class Post(Base):
     # post is regenerated.
     body_text: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
-    # Written by the Generation Engine's media hook (Issue #23, video/
-    # carousel branch — Issue #22 covers the image branch) — a dict keyed
-    # by platform, same per-platform shape as body_text, but each value is
-    # a *list* of media reference dicts (e.g. [{"url": ..., "status":
-    # "generated", "format": "short_video"}]) rather than a plain string,
-    # since a carousel is multiple media items for one platform. Only
-    # platforms whose media actually generated successfully get an entry
-    # here — a failed generation degrades gracefully (see
-    # generation_engine.py) and simply leaves that platform's entry
-    # unset/unchanged rather than writing a placeholder.
-    media: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Written by the Generation Engine's media hook (Issue #22 — image;
-    # Issue #23 will extend this for video) — a JSONB list of media
-    # references produced by this Post's latest generation run, e.g.
-    # [{"platform": "linkedin", "format": "image", "url": "..."}]. Follows
-    # the same "written by the Generation Engine, always reflects the
-    # latest run" convention as body_text above; unlike body_text it is
-    # only touched when a run actually produces new media (a run with no
-    # image/video/carousel platforms, or one where generation failed,
-    # leaves any previously-generated media untouched rather than wiping
-    # it to null).
+    # Issue #23 — video/carousel) — a JSONB list of media reference dicts
+    # produced by this Post's latest generation run, e.g. [{"platform":
+    # "linkedin", "format": "image", "url": "..."}]. Follows the same
+    # "written by the Generation Engine, always reflects the latest run"
+    # convention as body_text above; unlike body_text it is only touched
+    # when a run actually produces new media — an entry for a platform
+    # this run regenerated replaces that platform's prior entry, but
+    # entries for platforms this run didn't touch (including a run with
+    # no image/video/carousel platforms, or one where generation failed)
+    # are left untouched rather than wiped.
     media: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(

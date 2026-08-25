@@ -11,9 +11,10 @@ all stages wired in order, and the durability guarantee that makes the
 human review step safe to build — a paused run's state lives in Postgres
 (see checkpointer.py), not in process memory, so it survives a server
 restart. #19 is the first of those real-logic swaps: "research" now runs
-packages/agents/pipeline/nodes/research_engine.py instead of a stub. #20
-and #21 followed the same pattern for "creative"
-(nodes/creative_engine.py) and "generation" (nodes/generation_engine.py).
+packages/agents/pipeline/nodes/research_engine.py instead of a stub. #20,
+#21, and #24 followed the same pattern for "creative"
+(nodes/creative_engine.py), "generation" (nodes/generation_engine.py),
+and "reviewer" (nodes/reviewer_engine.py).
 
 The Human Review stage is a genuine LangGraph interrupt (`interrupt()`),
 not a status flag polled by a cron job: calling it suspends the graph
@@ -23,10 +24,10 @@ with a brand-new checkpointer instance pointed at the same database — replays
 up to the interrupt and continues with whatever value the resume provides.
 
 * The issue text calls this a "seven-step" pipeline while listing eight
-stage names. Reviewer (#24) and Human Review (#25) are tracked as
-separate future issues with distinct real logic, so this graph keeps them
-as two distinct nodes rather than forcing a miscount — PIPELINE_STAGES
-below is the source of truth for what's actually wired up.
+stage names. Reviewer (#24) and Human Review (#25) were tracked as
+separate issues with distinct real logic, so this graph keeps them as two
+distinct nodes rather than forcing a miscount — PIPELINE_STAGES below is
+the source of truth for what's actually wired up.
 """
 
 from collections.abc import Iterator
@@ -42,6 +43,7 @@ from apps.api.models.post import PipelineStage, Post
 from packages.agents.pipeline.nodes.creative_engine import build_creative_node
 from packages.agents.pipeline.nodes.generation_engine import build_generation_node
 from packages.agents.pipeline.nodes.research_engine import build_research_node
+from packages.agents.pipeline.nodes.reviewer_engine import build_reviewer_node
 
 # Pipeline order — the single source of truth for both graph wiring and the
 # tests that assert nodes are "present and wired in order".
@@ -101,6 +103,15 @@ class PipelineState(TypedDict):
     # research_brief's comment above), so this must be listed even though
     # it's only ever set by this one stage.
     generation_output: dict[str, Any] | None
+    # Populated by the reviewer node (#24) — the automated brand-voice/
+    # compliance/platform-fit review of Post.body_text: an overall score/
+    # verdict plus a per-platform breakdown (score/verdict/issues/
+    # suggested_edits), the same info persisted onto the ReviewFeedback
+    # row that stage writes (apps/api/models/review_feedback.py,
+    # source=ai_reviewer). LangGraph drops any state key not declared
+    # here (see research_brief's comment above), so this must be listed
+    # even though it's only ever set by this one stage.
+    review_output: dict[str, Any] | None
 
 
 def _stub_result(stage: str, state: PipelineState, **extra: Any) -> dict:
@@ -132,9 +143,35 @@ def _human_review_node(state: PipelineState) -> dict:
     here for hours or days waiting on a human, across process restarts,
     without any polling. Resuming with Command(resume=<decision>) re-enters
     this node, interrupt() returns the decision instead of pausing again,
-    and the graph continues on to `scheduler`."""
+    and the graph continues on to `scheduler` (or halts at END — see
+    _route_after_human_review below) depending on that decision."""
     decision = interrupt({"stage": "human_review", "post_id": state["post_id"]})
     return _stub_result("human_review", state, human_review_decision=decision)
+
+
+def _decision_action(decision: Any) -> str | None:
+    """Normalizes a resumed human_review_decision down to its action
+    string. Accepts either a bare string (e.g. "approved" — the shape
+    test_pipeline_graph.py's pre-#25 tests already resume with) or a dict
+    with a "decision" key (the shape apps/api/routers/review.py sends,
+    e.g. {"decision": "rejected", "comments": "..."}), so #25's API can
+    carry richer payloads without breaking the simpler existing callers."""
+    if isinstance(decision, dict):
+        decision = decision.get("decision")
+    if isinstance(decision, str):
+        return decision.lower()
+    return None
+
+
+def _route_after_human_review(state: PipelineState) -> str:
+    """Issue #25's actual resume-or-halt mechanism: a human's "rejected"
+    decision must not let the run reach `scheduler`/`publisher` — every
+    other decision (e.g. "approved") proceeds through the rest of the
+    pipeline as before. This is the only conditional edge in the graph;
+    every other stage is an unconditional straight line."""
+    if _decision_action(state.get("human_review_decision")) == "rejected":
+        return END
+    return "scheduler"
 
 
 def build_pipeline_graph(checkpointer, db: Session | None = None) -> CompiledStateGraph:
@@ -144,13 +181,14 @@ def build_pipeline_graph(checkpointer, db: Session | None = None) -> CompiledSta
     graph object could serve every run; callers select a run via the
     per-invocation `thread_id` in the LangGraph config.
 
-    `db` is the one exception: the "research" (#19), "creative" (#20), and
-    "generation" (#21) stages are the first nodes with real logic that
-    need a database session (to resolve Post -> Brand, and, for
-    generation, to write Post.body_text/PostVersion), so it's threaded
-    through here to those nodes' factories. It's optional and defaults to
-    None so callers that only want to inspect the compiled graph's
-    structure — never stream/invoke it — can keep calling this with just a
+    `db` is the one exception: the "research" (#19), "creative" (#20),
+    "generation" (#21), and "reviewer" (#24) stages are the first nodes
+    with real logic that need a database session (to resolve Post ->
+    Brand, and, for generation, to write Post.body_text/PostVersion, and
+    for reviewer, to write ReviewFeedback), so it's threaded through here
+    to those nodes' factories. It's optional and defaults to None so
+    callers that only want to inspect the compiled graph's structure —
+    never stream/invoke it — can keep calling this with just a
     checkpointer, same as before #19."""
     graph = StateGraph(PipelineState)
 
@@ -163,13 +201,23 @@ def build_pipeline_graph(checkpointer, db: Session | None = None) -> CompiledSta
             node = build_creative_node(db)
         elif stage == "generation":
             node = build_generation_node(db)
+        elif stage == "reviewer":
+            node = build_reviewer_node(db)
         else:
             node = _make_stub_node(stage)
         graph.add_node(stage, node)
 
     graph.add_edge(START, PIPELINE_STAGES[0])
     for upstream, downstream in zip(PIPELINE_STAGES, PIPELINE_STAGES[1:]):
-        graph.add_edge(upstream, downstream)
+        if upstream == "human_review":
+            # The one conditional edge in the graph — see
+            # _route_after_human_review's docstring. Every other stage is
+            # an unconditional straight line, same as before #25.
+            graph.add_conditional_edges(
+                "human_review", _route_after_human_review, {"scheduler": "scheduler", END: END}
+            )
+        else:
+            graph.add_edge(upstream, downstream)
     graph.add_edge(PIPELINE_STAGES[-1], END)
 
     return graph.compile(checkpointer=checkpointer)
@@ -263,6 +311,11 @@ def run_pipeline(
     state = graph.get_state(config)
     if state.next:
         post.current_pipeline_stage = STAGE_TO_PIPELINE_STAGE[state.next[0]]
+    elif _decision_action(state.values.get("human_review_decision")) == "rejected":
+        # Reached END via _route_after_human_review's reject branch, not
+        # by running the full pipeline to Analytics Collector — COMPLETED
+        # would misleadingly imply the post was actually published.
+        post.current_pipeline_stage = PipelineStage.REJECTED
     else:
         post.current_pipeline_stage = PipelineStage.COMPLETED
     db.flush()

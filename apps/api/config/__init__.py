@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     linkedin_client_secret: str | None = None
     linkedin_redirect_uri: str | None = None
 
+    x_client_id: str | None = None
+    x_client_secret: str | None = None
+    x_redirect_uri: str | None = None
+    # Reserved for X API app-level auth (e.g. the v1.1 media/upload
+    # endpoint, which needs OAuth 1.0a rather than the OAuth2 bearer token
+    # used everywhere else here) — not required by the OAuth2 publish flow
+    # XProvider uses today.
+    x_api_key: str | None = None
+
     search_provider: str = "tavily"
     llm_provider: str = "openrouter"
     storage_provider: str = "supabase"
@@ -48,6 +57,13 @@ class Settings(BaseSettings):
     runway_api_key: str | None = None
 
     sentry_dsn: str | None = None
+
+    # Issue #29: how far ahead of a ContentCalendarEvent's target_datetime
+    # (in minutes) the pipeline trigger job starts its pipeline run. Read
+    # by apps/api/worker.py's Celery Beat task; the actual selection logic
+    # in packages/agents/pipeline/trigger.py takes it as a plain argument
+    # so it stays unit-testable without touching Settings.
+    pipeline_trigger_lead_minutes: int = 60
 
 
 @lru_cache

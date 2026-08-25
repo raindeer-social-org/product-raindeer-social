@@ -1,3 +1,4 @@
+import base64
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -13,27 +14,42 @@ from packages.integrations.social.base import (
 
 
 class _TokenExpiredError(Exception):
-    """Internal signal that the platform rejected access_token as
-    expired/invalid — distinct from other HTTP failures because it's the
-    one case publish() retries after a refresh, rather than surfacing
-    immediately."""
+    """Internal signal that X rejected access_token as expired/invalid —
+    distinct from other HTTP failures because it's the one case publish()
+    retries after a refresh, rather than surfacing immediately."""
 
 
-class LinkedInProvider(SocialOAuthProvider, SocialPublisher):
-    """The only file in this codebase allowed to call LinkedIn's OAuth and
-    publishing endpoints directly."""
+class XProvider(SocialOAuthProvider, SocialPublisher):
+    """The only file in this codebase allowed to call X's (Twitter's)
+    OAuth and publishing endpoints directly.
 
-    AUTHORIZE_URL = "https://www.linkedin.com/oauth/v2/authorization"
-    TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
-    USERINFO_URL = "https://api.linkedin.com/v2/userinfo"
-    UGC_POSTS_URL = "https://api.linkedin.com/v2/ugcPosts"
+    X's OAuth 2.0 authorization-code flow requires PKCE. Rather than widen
+    SocialOAuthProvider's shared signature (authorize_url/exchange_code
+    take no PKCE params, since LinkedIn doesn't need any), this uses the
+    "plain" code_challenge_method with `state` doubling as the code
+    verifier — state is already unique per request, single-use, and
+    round-trips unmodified through the redirect, so it satisfies PKCE's
+    requirements without adding a param the interface's other adapters
+    would never use.
+    """
 
-    SCOPES = ("openid", "profile", "w_member_social")
+    AUTHORIZE_URL = "https://twitter.com/i/oauth2/authorize"
+    TOKEN_URL = "https://api.twitter.com/2/oauth2/token"
+    USERINFO_URL = "https://api.twitter.com/2/users/me"
+    TWEETS_URL = "https://api.twitter.com/2/tweets"
+
+    SCOPES = ("tweet.read", "tweet.write", "users.read", "offline.access")
 
     def __init__(self, client_id: str, client_secret: str, timeout: float = 15.0) -> None:
         self.client_id = client_id
         self.client_secret = client_secret
         self.timeout = timeout
+
+    def _basic_auth_header(self) -> str:
+        raw = f"{self.client_id}:{self.client_secret}".encode()
+        return f"Basic {base64.b64encode(raw).decode()}"
+
+    # -- SocialOAuthProvider ---------------------------------------------
 
     def authorize_url(self, state: str, redirect_uri: str) -> str:
         params = {
@@ -42,11 +58,13 @@ class LinkedInProvider(SocialOAuthProvider, SocialPublisher):
             "redirect_uri": redirect_uri,
             "state": state,
             "scope": " ".join(self.SCOPES),
+            "code_challenge": state,
+            "code_challenge_method": "plain",
         }
         return f"{self.AUTHORIZE_URL}?{urlencode(params)}"
 
     def exchange_code(self, code: str, redirect_uri: str) -> SocialTokens:
-        with track_integration_call("linkedin", "oauth_exchange"):
+        with track_integration_call("x", "oauth_exchange"):
             response = httpx.post(
                 self.TOKEN_URL,
                 data={
@@ -54,9 +72,12 @@ class LinkedInProvider(SocialOAuthProvider, SocialPublisher):
                     "code": code,
                     "redirect_uri": redirect_uri,
                     "client_id": self.client_id,
-                    "client_secret": self.client_secret,
+                    "code_verifier": redirect_uri,
                 },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Authorization": self._basic_auth_header(),
+                },
                 timeout=self.timeout,
             )
             response.raise_for_status()
@@ -69,9 +90,9 @@ class LinkedInProvider(SocialOAuthProvider, SocialPublisher):
             else None
         )
         raw_scope = data.get("scope")
-        scopes = raw_scope.split(",") if raw_scope else list(self.SCOPES)
+        scopes = raw_scope.split(" ") if raw_scope else list(self.SCOPES)
 
-        external_account_id = self._fetch_member_id(data["access_token"])
+        external_account_id = self._fetch_user_id(data["access_token"])
 
         return SocialTokens(
             access_token=data["access_token"],
@@ -82,7 +103,7 @@ class LinkedInProvider(SocialOAuthProvider, SocialPublisher):
         )
 
     def is_token_valid(self, access_token: str) -> bool:
-        with track_integration_call("linkedin", "oauth_status_check"):
+        with track_integration_call("x", "oauth_status_check"):
             response = httpx.get(
                 self.USERINFO_URL,
                 headers={"Authorization": f"Bearer {access_token}"},
@@ -90,17 +111,17 @@ class LinkedInProvider(SocialOAuthProvider, SocialPublisher):
             )
         return response.status_code == 200
 
-    def _fetch_member_id(self, access_token: str) -> str | None:
-        with track_integration_call("linkedin", "oauth_userinfo"):
+    def _fetch_user_id(self, access_token: str) -> str | None:
+        with track_integration_call("x", "oauth_userinfo"):
             response = httpx.get(
                 self.USERINFO_URL,
                 headers={"Authorization": f"Bearer {access_token}"},
                 timeout=self.timeout,
             )
             response.raise_for_status()
-            return response.json().get("sub")
+            return response.json().get("data", {}).get("id")
 
-    # -- SocialPublisher -----------------------------------------------
+    # -- SocialPublisher ---------------------------------------------------
 
     def publish(
         self,
@@ -115,19 +136,18 @@ class LinkedInProvider(SocialOAuthProvider, SocialPublisher):
             if not refresh_token:
                 return PublishResult(
                     success=False,
-                    error="LinkedIn access token expired/invalid and no refresh token is stored",
+                    error="X access token expired/invalid and no refresh token is stored",
                 )
             try:
                 new_tokens = self._refresh_access_token(refresh_token)
             except Exception as exc:  # noqa: BLE001 - surfaced as PublishResult, not raised
-                return PublishResult(success=False, error=f"LinkedIn token refresh failed: {exc}")
+                return PublishResult(success=False, error=f"X token refresh failed: {exc}")
 
             try:
                 result = self._attempt_publish(new_tokens.access_token, content, media_urls)
             except Exception as exc:  # noqa: BLE001
                 return PublishResult(
-                    success=False,
-                    error=f"LinkedIn publish failed after token refresh: {exc}",
+                    success=False, error=f"X publish failed after token refresh: {exc}"
                 )
             result.refreshed_tokens = new_tokens
             return result
@@ -137,65 +157,47 @@ class LinkedInProvider(SocialOAuthProvider, SocialPublisher):
     def _attempt_publish(
         self, access_token: str, content: str, media_urls: list[str] | None
     ) -> PublishResult:
-        with track_integration_call("linkedin", "publish"):
-            member_response = httpx.get(
-                self.USERINFO_URL,
-                headers={"Authorization": f"Bearer {access_token}"},
-                timeout=self.timeout,
-            )
-            if member_response.status_code == 401:
-                raise _TokenExpiredError("LinkedIn rejected the access token")
-            member_response.raise_for_status()
-            author_urn = f"urn:li:person:{member_response.json()['sub']}"
-
-            share_content: dict[str, object] = {
-                "shareCommentary": {"text": content},
-                "shareMediaCategory": "IMAGE" if media_urls else "NONE",
-            }
-            if media_urls:
-                share_content["media"] = [
-                    {"status": "READY", "originalUrl": url} for url in media_urls
-                ]
-
+        # media_urls isn't wired through here: X requires media to be
+        # pre-uploaded via the separate v1.1 media/upload endpoint (which
+        # needs OAuth 1.0a user-context signing, not the OAuth2 bearer
+        # token used everywhere else in this adapter) and referenced by
+        # the resulting media_id — no adapter/consumer in this codebase
+        # produces uploaded X media ids yet.
+        with track_integration_call("x", "publish"):
             response = httpx.post(
-                self.UGC_POSTS_URL,
+                self.TWEETS_URL,
                 headers={
                     "Authorization": f"Bearer {access_token}",
                     "Content-Type": "application/json",
-                    "X-Restli-Protocol-Version": "2.0.0",
                 },
-                json={
-                    "author": author_urn,
-                    "lifecycleState": "PUBLISHED",
-                    "specificContent": {"com.linkedin.ugc.ShareContent": share_content},
-                    "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
-                },
+                json={"text": content},
                 timeout=self.timeout,
             )
             if response.status_code == 401:
-                raise _TokenExpiredError("LinkedIn rejected the access token")
+                raise _TokenExpiredError("X rejected the access token")
             response.raise_for_status()
-            post_id = response.headers.get("x-restli-id") or response.json().get("id")
+            data = response.json().get("data", {})
 
+        post_id = data.get("id")
         return PublishResult(
             success=True,
             platform_post_id=post_id,
-            platform_post_url=(
-                f"https://www.linkedin.com/feed/update/{post_id}/" if post_id else None
-            ),
+            platform_post_url=f"https://x.com/i/web/status/{post_id}" if post_id else None,
         )
 
     def _refresh_access_token(self, refresh_token: str) -> SocialTokens:
-        with track_integration_call("linkedin", "oauth_refresh"):
+        with track_integration_call("x", "oauth_refresh"):
             response = httpx.post(
                 self.TOKEN_URL,
                 data={
                     "grant_type": "refresh_token",
                     "refresh_token": refresh_token,
                     "client_id": self.client_id,
-                    "client_secret": self.client_secret,
                 },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Authorization": self._basic_auth_header(),
+                },
                 timeout=self.timeout,
             )
             response.raise_for_status()
@@ -208,12 +210,13 @@ class LinkedInProvider(SocialOAuthProvider, SocialPublisher):
             else None
         )
         raw_scope = data.get("scope")
-        scopes = raw_scope.split(",") if raw_scope else list(self.SCOPES)
+        scopes = raw_scope.split(" ") if raw_scope else list(self.SCOPES)
 
         return SocialTokens(
             access_token=data["access_token"],
-            # LinkedIn's refresh response doesn't always include a new
-            # refresh_token — the old one stays valid until it's rotated.
+            # X rotates refresh tokens on every use — unlike LinkedIn,
+            # the old one is invalidated, so fall back only if the
+            # response is missing one for some reason.
             refresh_token=data.get("refresh_token", refresh_token),
             expires_at=expires_at,
             scopes=scopes,
