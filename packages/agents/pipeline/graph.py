@@ -4,8 +4,8 @@
     Scheduler -> Publisher -> Analytics Collector
 
 Every node here started as a stub — later issues (#19 Research, #20
-Creative, #21 Generation, #24 Reviewer, #25 Human Review, plus the
-not-yet-filed Scheduler/Publisher/Analytics Collector issues) replace one
+Creative, #21 Generation, #24 Reviewer, #25 Human Review, #31 Publisher,
+plus the not-yet-filed Scheduler/Analytics Collector issues) replace one
 node's body at a time with real logic. #18's job was the skeleton itself:
 all stages wired in order, and the durability guarantee that makes the
 human review step safe to build — a paused run's state lives in Postgres
@@ -14,7 +14,11 @@ restart. #19 is the first of those real-logic swaps: "research" now runs
 packages/agents/pipeline/nodes/research_engine.py instead of a stub. #20,
 #21, and #24 followed the same pattern for "creative"
 (nodes/creative_engine.py), "generation" (nodes/generation_engine.py),
-and "reviewer" (nodes/reviewer_engine.py).
+and "reviewer" (nodes/reviewer_engine.py). #31 followed it again for
+"publisher" — see _publisher_node below — though that one stays a
+one-line handoff to apps/api/services/publish_queue.py rather than
+gaining its own nodes/ module, since the actual publish logic needs no
+LangGraph-specific state, just a post_id.
 
 The Human Review stage is a genuine LangGraph interrupt (`interrupt()`),
 not a status flag polled by a cron job: calling it suspends the graph
@@ -30,6 +34,7 @@ distinct nodes rather than forcing a miscount — PIPELINE_STAGES below is
 the source of truth for what's actually wired up.
 """
 
+import uuid
 from collections.abc import Iterator
 from typing import Any, TypedDict
 
@@ -40,6 +45,7 @@ from sqlalchemy.orm import Session
 
 from apps.api.models.agent_run import AgentRun, AgentType
 from apps.api.models.post import PipelineStage, Post
+from apps.api.services.publish_queue import enqueue_publish
 from packages.agents.pipeline.nodes.creative_engine import build_creative_node
 from packages.agents.pipeline.nodes.generation_engine import build_generation_node
 from packages.agents.pipeline.nodes.research_engine import build_research_node
@@ -136,6 +142,22 @@ def _make_stub_node(stage: str):
     return _node
 
 
+def _publisher_node(state: PipelineState) -> dict:
+    """Issue #31 — the first real (non-stub) version of the `publisher`
+    stage. Its only job is to hand the post off to the durable,
+    Redis-backed publish queue (apps/api/services/publish_queue.py /
+    apps/api/worker.py) — the actual SocialPublisher calls, and their
+    retry-with-backoff, happen out-of-band in the Celery worker, not
+    synchronously inside this graph node. That keeps this stage cheap
+    (so a human's approve request — apps/api/routers/review.py, which
+    resumes the graph synchronously through this node and on to
+    COMPLETED — doesn't block on a live network call to LinkedIn/X) while
+    still guaranteeing every post that reaches `publisher` genuinely gets
+    enqueued, not silently dropped the way the old stub left it."""
+    enqueue_publish(uuid.UUID(state["post_id"]))
+    return _stub_result("publisher", state)
+
+
 def _human_review_node(state: PipelineState) -> dict:
     """The one real (non-stub) piece of behavior in this graph: a durable
     interrupt. Calling interrupt() here pauses graph execution and persists
@@ -203,6 +225,8 @@ def build_pipeline_graph(checkpointer, db: Session | None = None) -> CompiledSta
             node = build_generation_node(db)
         elif stage == "reviewer":
             node = build_reviewer_node(db)
+        elif stage == "publisher":
+            node = _publisher_node
         else:
             node = _make_stub_node(stage)
         graph.add_node(stage, node)

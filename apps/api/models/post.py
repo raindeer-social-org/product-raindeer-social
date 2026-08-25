@@ -31,6 +31,16 @@ class PipelineStage(str, enum.Enum):
     # scheduler when the resumed decision is "rejected", so a rejected
     # post never reaches those later stages.
     REJECTED = "rejected"
+    # Terminal state for a post whose actual publish (Issue #31's
+    # Redis-backed publish queue, apps/api/services/publish_queue.py)
+    # permanently failed after its retries were exhausted — distinct from
+    # COMPLETED because the pipeline graph itself finishes normally
+    # (`publisher` only hands the post off to the async publish queue;
+    # see graph.py), so COMPLETED is set before the real publish outcome
+    # is known. This stage is set out-of-band by the publish queue, not
+    # by run_pipeline, once the durable retry/backoff has genuinely given
+    # up — same "add a value, same table" shape as REJECTED above.
+    FAILED = "failed"
 
 
 class Post(Base):
@@ -76,6 +86,24 @@ class Post(Base):
     # no image/video/carousel platforms, or one where generation failed)
     # are left untouched rather than wiped.
     media: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
+    # Written by the publish queue (Issue #31,
+    # apps/api/services/publish_queue.py) — per-platform outcome of the
+    # most recent publish attempt, e.g. {"linkedin": {"status":
+    # "published", "platform_post_id": "...", "platform_post_url": "..."},
+    # "x": {"status": "failed", "error": "..."}}. Read back on every retry
+    # attempt so an already-published platform is never re-published just
+    # because a sibling platform's attempt failed and the whole post gets
+    # retried.
+    publish_results: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # The most recent publish failure reason, across whichever platform(s)
+    # failed — kept as a single human-readable summary field so a caller
+    # (an API response, a future #32 notification) never has to reach
+    # into publish_results just to show "why did this fail". Cleared back
+    # to None on a fully successful publish. Never silently dropped: the
+    # publish queue writes this on every failed attempt, not just once
+    # retries are exhausted.
+    publish_error: Mapped[str | None] = mapped_column(nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
