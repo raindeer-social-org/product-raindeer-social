@@ -7,6 +7,8 @@ from apps.api.config import get_settings
 from apps.api.config.database import SessionLocal
 from apps.api.models.brand import Brand
 from apps.api.services import engagement_polling, publish_queue
+from apps.api.models import Post
+from apps.api.services import engagement_polling, notifications, publish_queue
 from packages.agents.pipeline.trigger import trigger_due_pipelines
 from packages.agents.reporting.weekly_report import generate_weekly_report
 
@@ -113,6 +115,16 @@ class _PublishTask(Task):
         try:
             publish_queue.mark_post_failed(db, uuid.UUID(post_id), reason=str(exc))
             db.commit()
+
+            # Issue #32 — fire the publish-failure notification within
+            # this same job run, right after the terminal FAILED state is
+            # committed. notify_publish_failure never raises (see
+            # apps/api/services/notifications.py's module docstring), so
+            # this can't turn a successfully-recorded failure into an
+            # unhandled exception here.
+            post = db.get(Post, uuid.UUID(post_id))
+            if post is not None:
+                notifications.notify_publish_failure(db, post)
         except Exception:
             db.rollback()
             logger.exception("Failed to record publish failure for post_id=%s", post_id)

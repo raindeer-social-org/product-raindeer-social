@@ -79,7 +79,9 @@ from packages.integrations.registry import (
     get_image_provider,
     get_llm_provider,
     get_storage_provider,
+    get_video_provider,
 )
+from packages.integrations.video_gen.base import VideoResult
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +90,10 @@ logger = logging.getLogger(__name__)
 # substring rather than exact value — "short_video" and "carousel_post"
 # both still need the media hook.
 MEDIA_FORMAT_KEYWORDS = ("image", "video", "carousel")
+
+# Subset of MEDIA_FORMAT_KEYWORDS routed to VideoProvider (#23) rather
+# than ImageProvider (#22) — see generate_media_stub's dispatch below.
+VIDEO_FORMAT_KEYWORDS = ("video", "carousel")
 
 # Rough, provider-agnostic per-token estimate used only to keep
 # AgentRun.cost/PostVersion.cost populated (per #21's acceptance criteria)
@@ -172,33 +178,92 @@ def _generate_image_media(post_id: str, platform: str, platform_brief: dict[str,
             platform,
             exc_info=True,
         )
-        return {"status": "failed", "platform": platform, "format": fmt}
+        return {"status": "failed", "platform": platform, "format": fmt, "url": None}
+
+    return {"status": "generated", "platform": platform, "format": fmt, "url": stored_url}
+
+
+def _is_video_or_carousel_format(fmt: str) -> bool:
+    return any(keyword in fmt for keyword in VIDEO_FORMAT_KEYWORDS)
+
+
+def _build_video_prompt(platform_brief: dict[str, Any]) -> str:
+    """Composes a text-to-video prompt straight from the creative brief's
+    hook/angle/tone — same spirit as _fallback_copy_for below: no separate
+    LLM call just to write a video prompt, reuse what the Creative Engine
+    (#20) already produced."""
+    hook = str(platform_brief.get("hook") or "").strip()
+    angle = str(platform_brief.get("angle") or "").strip()
+    tone = str(platform_brief.get("tone") or "").strip()
+    parts = [part for part in (hook, angle, tone) if part]
+    if parts:
+        return " — ".join(parts)
+    return "Short-form social media video."
+
+
+def _store_generated_video(post_id: str, platform: str, result: VideoResult) -> str:
+    """Persists the generated asset via this repo's own StorageProvider
+    (#11) rather than linking Runway's own hosted URL directly — vendor
+    output URLs for video-gen are not guaranteed to stay valid
+    indefinitely. Interface-only: only ever talks to StorageProvider,
+    never a vendor SDK/URL directly."""
+    storage = get_storage_provider()
+    extension = "mp4" if "mp4" in (result.content_type or "") else "bin"
+    path = f"generated-media/{post_id}/{platform}-{uuid.uuid4().hex}.{extension}"
+    return storage.upload(path, result.content, result.content_type or "video/mp4")
+
+
+def _generate_video_media(post_id: str, platform: str, platform_brief: dict[str, Any]) -> dict[str, Any]:
+    """The real (Issue #23) video/carousel branch of the media hook: calls
+    VideoProvider exclusively through its interface
+    (packages.integrations.registry.get_video_provider()) — never Runway's
+    HTTP API directly — then stores the result via StorageProvider, same
+    interface-only, degrade-on-failure contract as _generate_image_media
+    above."""
+    fmt = platform_brief.get("format")
+    try:
+        prompt = _build_video_prompt(platform_brief)
+        result = get_video_provider().generate(prompt=prompt)
+        stored_url = _store_generated_video(post_id, platform, result)
+    except Exception:
+        logger.warning(
+            "Generation Engine: video/carousel generation failed for post=%s "
+            "platform=%s; degrading gracefully (no media attached)",
+            post_id,
+            platform,
+            exc_info=True,
+        )
+        return {"status": "failed", "platform": platform, "format": fmt, "url": None}
 
     return {"status": "generated", "platform": platform, "format": fmt, "url": stored_url}
 
 
 def generate_media_stub(post_id: str, platform: str, platform_brief: dict[str, Any]) -> dict[str, Any]:
-    """Image/video-generation hook. For `image` formats this now calls the
-    real fal.ai-backed adapter (#22, see _generate_image_media above);
-    `video`/`carousel` formats still return the original #21 placeholder
-    below, left as the call site for #23 to replace/extend — this issue's
-    job is only the image branch, narrowly scoped so #23's eventual
-    rebase against this stays small."""
-    fmt = str(platform_brief.get("format", "")).lower()
-    if "image" in fmt:
-        return _generate_image_media(post_id, platform, platform_brief)
-
+    """Image/video-generation hook, called whenever a platform's brief
+    calls for image/video/carousel. `image` formats go through the real
+    fal.ai-backed adapter (#22, _generate_image_media above); `video`/
+    `carousel` formats go through the real Runway-backed adapter (#23,
+    _generate_video_media above). Both branches are interface-only and
+    degrade gracefully — see each function's own docstring — so a broken/
+    unconfigured provider never crashes the whole pipeline run."""
+    fmt = str(platform_brief.get("format") or "")
     logger.info(
-        "Generation Engine: media hook stub called for post=%s platform=%s format=%r",
+        "Generation Engine: media hook called for post=%s platform=%s format=%r",
         post_id,
         platform,
-        platform_brief.get("format"),
+        fmt,
     )
-    return {
-        "status": "stubbed",
-        "platform": platform,
-        "format": platform_brief.get("format"),
-    }
+
+    fmt_lower = fmt.lower()
+    if "image" in fmt_lower:
+        return _generate_image_media(post_id, platform, platform_brief)
+    if _is_video_or_carousel_format(fmt_lower):
+        return _generate_video_media(post_id, platform, platform_brief)
+
+    # Neither image nor video/carousel — MEDIA_FORMAT_KEYWORDS already
+    # gates callers to one of those, so this is only reachable if that
+    # gate and this dispatch ever drift; fail soft rather than crash.
+    return {"status": "stubbed", "platform": platform, "format": fmt or None, "url": None}
 
 
 def _strip_code_fence(text: str) -> str:
@@ -319,16 +384,23 @@ def _generation_output(db: Session, post: Post, creative_brief: dict[str, Any]) 
     cost = _estimate_cost(tokens)
 
     # Collect this run's successfully generated media (status="generated")
-    # onto Post.media — see Post.media's docstring (apps/api/models/post.py)
-    # for why a run that produced no new media leaves any prior media
-    # untouched rather than wiping it to null.
+    # onto Post.media — a JSONB list of {"platform", "format", "url"}
+    # dicts (apps/api/models/post.py). Only touched when this run
+    # actually produced new media: an entry for a platform this run
+    # regenerated replaces that platform's prior entry, but entries for
+    # platforms this run didn't touch (including ones with no media at
+    # all) are preserved rather than wiped.
     media_items = [
         {"platform": platform, "format": result["media"]["format"], "url": result["media"]["url"]}
         for platform, result in platform_results.items()
         if result["media"] and result["media"].get("status") == "generated"
     ]
     if media_items:
-        post.media = media_items
+        touched_platforms = {item["platform"] for item in media_items}
+        preserved = [
+            item for item in (post.media or []) if item.get("platform") not in touched_platforms
+        ]
+        post.media = preserved + media_items
 
     # Write the generated copy onto the Post itself, and append an
     # immutable version-history row (see module docstring) so a second

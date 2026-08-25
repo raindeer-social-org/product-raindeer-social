@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     llm_provider: str = "openrouter"
     storage_provider: str = "supabase"
     embedding_provider: str = "openai"
+    video_provider: str = "runway"
     image_provider: str = "fal"
 
     # OpenRouter's free-models router — swap for a paid model slug (e.g.
@@ -52,7 +53,26 @@ class Settings(BaseSettings):
     supabase_service_key: str | None = None
     supabase_storage_bucket: str = "brand-assets"
 
+    # Generation Engine's video/carousel branch (Issue #23).
+    runway_api_key: str | None = None
+
     sentry_dsn: str | None = None
+
+    # --- Status notifications (Issue #32) ---
+    # Generic SMTP, not a vendor SDK — works with any transactional-email
+    # provider that exposes SMTP credentials (SES/SendGrid/Postmark/
+    # Resend/...). Left unset (smtp_host=None) disables email sending;
+    # apps/api/services/notifications.py's EmailAdapter no-ops rather than
+    # attempting a connection.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    notification_from_email: str | None = None
+    # Slack incoming-webhook URL. Left unset disables Slack notifications;
+    # apps/api/services/notifications.py's SlackWebhookAdapter no-ops
+    # rather than posting to an empty URL.
+    slack_webhook_url: str | None = None
 
     # Issue #29: how far ahead of a ContentCalendarEvent's target_datetime
     # (in minutes) the pipeline trigger job starts its pipeline run. Read
