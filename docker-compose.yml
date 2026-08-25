@@ -56,16 +56,20 @@ services:
       redis:
         condition: service_healthy
 
-  # web:
-  #   Uncomment once apps/web has a real Next.js app (Issue #36) — right now
-  #   it's an empty placeholder directory, so there's nothing to build/run.
-  #   image: node:18-slim
-  #   working_dir: /app/apps/web
-  #   volumes:
-  #     - .:/app
-  #   ports:
-  #     - "3000:3000"
-  #   command: sh -c "npm ci && npm run dev"
+  web:
+    image: node:18-slim
+    working_dir: /app/apps/web
+    volumes:
+      - .:/app
+    ports:
+      - "3000:3000"
+    environment:
+      # Browser-facing, so it points at the host-published API port, not
+      # the in-network "api" service name.
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    command: sh -c "npm ci && npm run dev"
+    depends_on:
+      - api
 
 volumes:
   pgdata:

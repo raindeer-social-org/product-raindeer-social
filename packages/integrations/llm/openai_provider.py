@@ -1,4 +1,4 @@
-import httpx
+from openai import OpenAI
 
 from packages.integrations.llm.base import LLMProvider, LLMResponse
 from packages.integrations.observability import track_integration_call
@@ -8,31 +8,21 @@ class OpenAIProvider(LLMProvider):
     """The only file allowed to call OpenAI directly. Secondary path —
     for OpenAI-only features OpenRouter doesn't cover well."""
 
-    BASE_URL = "https://api.openai.com/v1/chat/completions"
-
     def __init__(self, api_key: str, timeout: float = 60.0) -> None:
-        self.api_key = api_key
-        self.timeout = timeout
+        self.client = OpenAI(api_key=api_key, timeout=timeout)
 
     def complete(self, prompt: str, model: str, **kwargs: object) -> LLMResponse:
         with track_integration_call("openai", "llm"):
-            response = httpx.post(
-                self.BASE_URL,
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    **kwargs,
-                },
-                timeout=self.timeout,
+            completion = self.client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                **kwargs,
             )
-            response.raise_for_status()
-            data = response.json()
 
-        usage = data.get("usage", {})
+        usage = completion.usage
         return LLMResponse(
-            text=data["choices"][0]["message"]["content"],
-            model=data.get("model", model),
-            input_tokens=usage.get("prompt_tokens", 0),
-            output_tokens=usage.get("completion_tokens", 0),
+            text=completion.choices[0].message.content,
+            model=completion.model,
+            input_tokens=usage.prompt_tokens if usage else 0,
+            output_tokens=usage.completion_tokens if usage else 0,
         )

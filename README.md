@@ -72,6 +72,18 @@ Fill in `.env` with at least one LLM API key (`OPENAI_API_KEY`,
 non-default local Postgres, update `DATABASE_URL`. `.env` is gitignored —
 never commit it.
 
+**LLM provider: OpenRouter, free models by default.** `LLM_PROVIDER`
+defaults to `openrouter` and `LLM_DEFAULT_MODEL` to `openrouter/free` —
+OpenRouter's own free-models router, so a local `OPENROUTER_API_KEY` (free
+to create at [openrouter.ai](https://openrouter.ai)) is enough to run every
+agent with no spend. Both providers call OpenRouter/OpenAI through the
+`openai` Python SDK's `OpenAI()` client (OpenRouter's API is OpenAI-
+compatible — same SDK, different `base_url`), never a bespoke HTTP client;
+see `packages/integrations/llm/`. When agent quality/latency needs outgrow
+the free tier, point `LLM_DEFAULT_MODEL` at a paid slug (e.g.
+`anthropic/claude-sonnet-4.5`) — that's a one-line env change, not a code
+change.
+
 ### 5. Run the API
 
 ```bash
