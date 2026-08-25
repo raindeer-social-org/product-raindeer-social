@@ -36,6 +36,53 @@ export interface Brand {
   updated_at: string;
 }
 
+// Mirrors apps/api/models/content_calendar_event.py::CalendarEventStatus.
+export type CalendarEventStatus =
+  | "scheduled"
+  | "pipeline_running"
+  | "ready_for_review"
+  | "approved"
+  | "published"
+  | "failed";
+
+// Mirrors apps/api/schemas/calendar.py::CalendarEventRead.
+export interface CalendarEvent {
+  id: string;
+  brand_id: string;
+  title: string;
+  description: string | null;
+  target_platforms: string[];
+  desired_format: string;
+  target_datetime: string;
+  status: CalendarEventStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+// Mirrors apps/api/schemas/calendar.py::CalendarEventCreate.
+export interface CalendarEventInput {
+  title: string;
+  description?: string | null;
+  target_platforms: string[];
+  desired_format: string;
+  target_datetime: string;
+}
+
+// Mirrors apps/api/schemas/calendar.py::CalendarEventUpdate — every field
+// optional, PATCH-style (only fields present are changed server-side).
+export interface CalendarEventUpdateInput {
+  title?: string;
+  description?: string | null;
+  target_platforms?: string[];
+  desired_format?: string;
+  target_datetime?: string;
+  status?: CalendarEventStatus;
+}
+
+function authHeaders(token: string): Record<string, string> {
+  return { Authorization: `Bearer ${token}` };
+}
+
 async function parseErrorDetail(res: Response): Promise<string> {
   try {
     const body = await res.json();
@@ -70,4 +117,70 @@ export async function fetchBrands(token: string): Promise<Brand[]> {
   }
 
   return res.json();
+}
+
+// apps/api/routers/calendar.py mounts these under
+// /brands/{brand_id}/calendar-events, so every call is scoped to a brand.
+function calendarEventsUrl(brandId: string, suffix = ""): string {
+  return `${API_URL}/brands/${brandId}/calendar-events${suffix}`;
+}
+
+export async function fetchCalendarEvents(token: string, brandId: string): Promise<CalendarEvent[]> {
+  const res = await fetch(calendarEventsUrl(brandId), {
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function createCalendarEvent(
+  token: string,
+  brandId: string,
+  payload: CalendarEventInput
+): Promise<CalendarEvent> {
+  const res = await fetch(calendarEventsUrl(brandId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function updateCalendarEvent(
+  token: string,
+  brandId: string,
+  eventId: string,
+  payload: CalendarEventUpdateInput
+): Promise<CalendarEvent> {
+  const res = await fetch(calendarEventsUrl(brandId, `/${eventId}`), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function deleteCalendarEvent(token: string, brandId: string, eventId: string): Promise<void> {
+  const res = await fetch(calendarEventsUrl(brandId, `/${eventId}`), {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
 }
