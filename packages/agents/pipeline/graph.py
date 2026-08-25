@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session
 
 from apps.api.models.agent_run import AgentRun, AgentType
 from apps.api.models.post import PipelineStage, Post
+from packages.agents.pipeline.nodes.creative_engine import build_creative_node
 from packages.agents.pipeline.nodes.research_engine import build_research_node
 
 # Pipeline order — the single source of truth for both graph wiring and the
@@ -86,6 +87,10 @@ class PipelineState(TypedDict):
     # not declared here, so this must be listed even though it's only
     # ever set by one stage.
     research_brief: dict[str, Any] | None
+    # Populated by the creative node (#20) — the structured creative brief
+    # (format/angle/hook/CTA per target platform) #21 (Generation Engine)
+    # consumes to actually write copy.
+    creative_brief: dict[str, Any] | None
 
 
 def _stub_result(stage: str, state: PipelineState, **extra: Any) -> dict:
@@ -129,12 +134,13 @@ def build_pipeline_graph(checkpointer, db: Session | None = None) -> CompiledSta
     graph object could serve every run; callers select a run via the
     per-invocation `thread_id` in the LangGraph config.
 
-    `db` is the one exception: the "research" stage (#19) is the first
-    node with real logic that needs a database session (to resolve
-    Post -> Brand), so it's threaded through here to that node's factory.
-    It's optional and defaults to None so callers that only want to
-    inspect the compiled graph's structure — never stream/invoke it — can
-    keep calling this with just a checkpointer, same as before #19."""
+    `db` is the one exception: the "research" (#19) and "creative" (#20)
+    stages are the first nodes with real logic that need a database
+    session (to resolve Post -> Brand), so it's threaded through here to
+    those nodes' factories. It's optional and defaults to None so callers
+    that only want to inspect the compiled graph's structure — never
+    stream/invoke it — can keep calling this with just a checkpointer,
+    same as before #19."""
     graph = StateGraph(PipelineState)
 
     for stage in PIPELINE_STAGES:
@@ -142,6 +148,8 @@ def build_pipeline_graph(checkpointer, db: Session | None = None) -> CompiledSta
             node = _human_review_node
         elif stage == "research":
             node = build_research_node(db)
+        elif stage == "creative":
+            node = build_creative_node(db)
         else:
             node = _make_stub_node(stage)
         graph.add_node(stage, node)
