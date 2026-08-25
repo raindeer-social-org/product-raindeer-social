@@ -24,6 +24,13 @@ class PipelineStage(str, enum.Enum):
     PUBLISHER = "publisher"
     ANALYTICS_COLLECTOR = "analytics_collector"
     COMPLETED = "completed"
+    # Terminal state for a run a human explicitly rejected at the
+    # human_review interrupt (Issue #25) — distinct from COMPLETED, which
+    # implies the post made it all the way through Publisher/Analytics
+    # Collector. graph.py routes human_review straight to END instead of
+    # scheduler when the resumed decision is "rejected", so a rejected
+    # post never reaches those later stages.
+    REJECTED = "rejected"
 
 
 class Post(Base):

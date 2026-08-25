@@ -1,0 +1,4 @@
+{
+  "extends": "next/core-web-vitals",
+  "ignorePatterns": ["vitest.config.ts", "vitest.setup.ts", "__tests__/**"]
+}
