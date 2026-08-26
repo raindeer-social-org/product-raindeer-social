@@ -110,6 +110,17 @@ class PipelineState(TypedDict):
     # research_brief's comment above), so this must be listed even though
     # it's only ever set by this one stage.
     generation_output: dict[str, Any] | None
+    # Optional, caller-supplied input (never set by any node) read by the
+    # generation node (#21/#106) to decide whether to run its default
+    # single-Post/PostVersion behavior or #106's opt-in batch mode —
+    # {"batch": True, "variant_count": <int, optional>} — see
+    # nodes/generation_engine.py's module docstring ("Batch mode") for the
+    # full contract. Absent for the calendar-slot-triggered flow
+    # (trigger.py) and apps/api/routers/review.py's resume calls, so their
+    # behavior is unchanged by #106. LangGraph drops any state key not
+    # declared here (see research_brief's comment above), so this must be
+    # listed even though no node ever writes to it.
+    generation_options: dict[str, Any] | None
     # Populated by the reviewer node (#24) — the automated brand-voice/
     # compliance/platform-fit review of Post.body_text: an overall score/
     # verdict plus a per-platform breakdown (score/verdict/issues/
@@ -258,6 +269,7 @@ def run_pipeline(
     checkpointer,
     *,
     resume: Any = None,
+    generation_options: dict[str, Any] | None = None,
 ) -> Iterator[dict]:
     """Advances `post` through the pipeline graph until it either finishes
     or hits the human_review interrupt, updating Post.current_pipeline_stage
@@ -267,6 +279,16 @@ def run_pipeline(
 
     Pass `resume=<value>` to continue a previously interrupted run (e.g. a
     human's approve/reject decision) instead of starting a new one.
+
+    Pass `generation_options=<dict>` to opt into the generation node's
+    batch mode (Issue #106) for a fresh run — e.g. {"batch": True,
+    "variant_count": 5} — see nodes/generation_engine.py's module
+    docstring for the full contract. Defaults to None (unchanged, single-
+    Post behavior); ignored when `resume` is set, since generation already
+    ran earlier in the same thread and isn't re-entered on resume. Neither
+    the calendar-slot-triggered flow (trigger.py) nor
+    apps/api/routers/review.py's resume calls pass this, so their
+    behavior is unaffected by #106.
 
     Yields each node's raw update dict as it completes, in case a caller
     wants to observe progress; most callers can just ignore the return
@@ -279,6 +301,8 @@ def run_pipeline(
         graph_input: Any = Command(resume=resume)
     else:
         graph_input = {"post_id": str(post.id), "completed_stages": []}
+        if generation_options is not None:
+            graph_input["generation_options"] = generation_options
 
     for update in graph.stream(graph_input, config=config, stream_mode="updates"):
         for node_name, node_output in update.items():
