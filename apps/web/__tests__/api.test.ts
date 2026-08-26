@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { ApiError, fetchBrands, login } from "@/lib/api";
+import { ApiError, createBrand, fetchBrands, login, uploadBrandLogo } from "@/lib/api";
 
 describe("api client", () => {
   const originalFetch = global.fetch;
@@ -63,5 +63,37 @@ describe("api client", () => {
     });
 
     await expect(fetchBrands("test-token")).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("createBrand posts the payload as JSON with the bearer token", async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "brand-1", name: "Acme Co" }),
+    });
+
+    await createBrand("test-token", { name: "Acme Co", industry: "Retail" });
+
+    const [url, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/brands");
+    expect(options.method).toBe("POST");
+    expect(options.headers.Authorization).toBe("Bearer test-token");
+    expect(JSON.parse(options.body)).toEqual({ name: "Acme Co", industry: "Retail" });
+  });
+
+  it("uploadBrandLogo PUTs a multipart form with the file under the 'file' field", async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "brand-1", logo_url: "https://cdn.example.com/logo.png" }),
+    });
+    const file = new File(["bytes"], "logo.png", { type: "image/png" });
+
+    await uploadBrandLogo("test-token", "brand-1", file);
+
+    const [url, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/brands/brand-1/logo");
+    expect(options.method).toBe("PUT");
+    expect(options.headers.Authorization).toBe("Bearer test-token");
+    expect(options.body).toBeInstanceOf(FormData);
+    expect((options.body as FormData).get("file")).toBe(file);
   });
 });

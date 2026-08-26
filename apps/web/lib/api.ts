@@ -32,9 +32,26 @@ export interface Brand {
   tone_descriptors: string[] | null;
   product_catalog: Record<string, unknown> | null;
   brand_report: Record<string, unknown> | null;
+  report_pdf_url?: string | null;
+  report_pdf_generated_at?: string | null;
   created_at: string;
   updated_at: string;
 }
+
+// Mirrors apps/api/schemas/brand.py::BrandCreate.
+export interface BrandInput {
+  name: string;
+  industry?: string | null;
+  logo_url?: string | null;
+  target_audience?: string | null;
+  colors?: string[] | null;
+  tone_descriptors?: string[] | null;
+  product_catalog?: Record<string, unknown> | null;
+}
+
+// Mirrors apps/api/schemas/brand.py::BrandUpdate — every field optional,
+// PATCH-style (only fields present are changed server-side).
+export type BrandUpdateInput = Partial<BrandInput>;
 
 // Mirrors apps/api/models/content_calendar_event.py::CalendarEventStatus.
 export type CalendarEventStatus =
@@ -330,6 +347,88 @@ export async function rescheduleReviewPost(
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+// --- Brand CRUD (Issue #89) ---
+
+function brandUrl(brandId: string, suffix = ""): string {
+  return `${API_URL}/brands/${brandId}${suffix}`;
+}
+
+export async function createBrand(token: string, payload: BrandInput): Promise<Brand> {
+  const res = await fetch(`${API_URL}/brands`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function updateBrand(
+  token: string,
+  brandId: string,
+  payload: BrandUpdateInput
+): Promise<Brand> {
+  const res = await fetch(brandUrl(brandId), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function deleteBrand(token: string, brandId: string): Promise<void> {
+  const res = await fetch(brandUrl(brandId), {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+}
+
+// apps/api/routers/brands.py::upload_brand_logo takes a single multipart
+// field named "file" (fastapi.UploadFile) — the field name matters, the
+// backend reads request.form()["file"].
+export async function uploadBrandLogo(token: string, brandId: string, file: File): Promise<Brand> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(brandUrl(brandId, "/logo"), {
+    method: "PUT",
+    headers: authHeaders(token),
+    body: formData,
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function removeBrandLogo(token: string, brandId: string): Promise<Brand> {
+  const res = await fetch(brandUrl(brandId, "/logo"), {
+    method: "DELETE",
+    headers: authHeaders(token),
   });
 
   if (!res.ok) {
