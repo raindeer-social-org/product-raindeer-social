@@ -5,10 +5,12 @@ import type { FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ApiError, login as loginRequest } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import { Button } from "@/components/ui/Button";
+import { Field, Input } from "@/components/ui/Input";
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div className="login-page" />}>
+    <Suspense fallback={<div className="min-h-screen bg-slate-50" />}>
       <LoginForm />
     </Suspense>
   );
@@ -40,41 +42,53 @@ function LoginForm() {
   }
 
   return (
-    <div className="login-page">
-      <div className="login-card">
-        <h1>Log in</h1>
-        <form onSubmit={handleSubmit} noValidate>
-          {error ? (
-            <p className="login-error" role="alert">
-              {error}
-            </p>
-          ) : null}
-          <label className="login-field">
-            <span>Email</span>
-            <input
-              type="email"
-              name="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-            />
-          </label>
-          <label className="login-field">
-            <span>Password</span>
-            <input
-              type="password"
-              name="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </label>
-          <button type="submit" className="login-submit" disabled={isSubmitting}>
-            {isSubmitting ? "Logging in…" : "Log in"}
-          </button>
-        </form>
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+      <div className="w-full max-w-sm">
+        <div className="mb-8 flex flex-col items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-600 text-lg font-bold text-white">
+            R
+          </div>
+          <h1 className="text-lg font-semibold text-slate-900">Raindeer Social</h1>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-7 shadow-card">
+          <h2 className="mb-5 text-base font-semibold text-slate-900">Log in to your workspace</h2>
+          <form onSubmit={handleSubmit} noValidate className="space-y-4">
+            {error ? (
+              <p
+                role="alert"
+                className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700"
+              >
+                {error}
+              </p>
+            ) : null}
+            <Field label="Email" htmlFor="email">
+              <Input
+                id="email"
+                type="email"
+                name="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </Field>
+            <Field label="Password" htmlFor="password">
+              <Input
+                id="password"
+                type="password"
+                name="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </Field>
+            <Button type="submit" className="w-full" isLoading={isSubmitting}>
+              {isSubmitting ? "Logging in…" : "Log in"}
+            </Button>
+          </form>
+        </div>
       </div>
     </div>
   );
