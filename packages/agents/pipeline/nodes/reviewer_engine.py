@@ -46,6 +46,23 @@ shape: a factory, build_reviewer_node(db), closing over a caller-supplied
 Session (needed to resolve Post -> Brand, same as the earlier stages),
 returning the actual LangGraph node function. graph.py's
 build_pipeline_graph() calls this factory for the "reviewer" stage only.
+
+Predicted engagement (Issue #107): alongside its brand-alignment/
+compliance/platform-fit scoring, this node now also predicts, per
+platform, how well the draft is likely to perform (0-100 plus a short
+natural-language reasoning string). Grounded in the brand's actual
+historical performance where it exists: _historical_engagement_safely
+computes each platform's average engagement rate ((likes + comments +
+shares) / impressions) across the brand's own past EngagementSnapshot
+rows (Issue #33/#34) and hands the real numbers to the LLM as grounding
+data in the same prompt, alongside brand_context — the same "give the
+LLM real reference material rather than have it guess" pattern this node
+already uses for brand voice. When a platform doesn't yet have enough
+history (_MIN_HISTORICAL_SAMPLES), the prompt says so explicitly and asks
+for a pure qualitative estimate instead. One LLM call still produces
+every field for a platform (score/verdict/issues/suggested_edits plus
+predicted_engagement_score/predicted_engagement_reasoning) — same
+all-or-nothing parse/fallback contract as the rest of this module.
 """
 
 import json
@@ -54,10 +71,12 @@ import time
 import uuid
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from apps.api.config import get_settings
 from apps.api.models.brand import Brand
+from apps.api.models.engagement_snapshot import EngagementSnapshot
 from apps.api.models.post import Post
 from apps.api.models.review_feedback import ReviewFeedback, ReviewSource, ReviewVerdict
 from apps.api.services.brand_retrieval import get_relevant_brand_context
@@ -67,6 +86,12 @@ logger = logging.getLogger(__name__)
 
 BRAND_CONTEXT_TOP_K = 3
 BRAND_CONTEXT_QUERY = "brand voice, tone, compliance guidelines, and platform norms"
+
+# A brand needs at least this many past snapshot rows with real impressions
+# on a given platform before its historical engagement rate is trusted
+# enough to ground the LLM's prediction — a 1-2 post sample is too noisy to
+# hand over as if it were a reliable benchmark.
+_MIN_HISTORICAL_SAMPLES = 3
 
 # Worst-verdict-wins ordering used to derive one overall verdict from
 # several per-platform verdicts (see module docstring).
@@ -91,6 +116,12 @@ _FALLBACK_SUGGESTED_EDITS = (
     "The Reviewer Engine could not complete an automated pass on this "
     "draft. Route this post to manual human review before it proceeds "
     "rather than relying on this fallback score."
+)
+_FALLBACK_ENGAGEMENT_SCORE = 50.0
+_FALLBACK_ENGAGEMENT_REASONING = (
+    "Automated engagement prediction unavailable (LLM provider error or "
+    "unparseable response) — could not estimate predicted engagement for "
+    "this draft."
 )
 
 # Rough, provider-agnostic per-token estimate used only to keep this
@@ -133,6 +164,60 @@ def _brand_context_safely(db: Session, brand_id: Any) -> list[dict]:
         return []
 
 
+def _historical_engagement_stats(db: Session, brand_id: Any, platform: str) -> dict[str, Any] | None:
+    """The brand's own average engagement rate on `platform` — (likes +
+    comments + shares) / impressions, averaged over every past
+    EngagementSnapshot row for this brand on this platform that actually
+    has impressions to divide by — plus how many snapshots that average is
+    built from. Computed as a single SQL AVG/COUNT (same "aggregate in
+    Postgres, don't fetch-and-reduce in Python" convention
+    analytics_aggregation.py establishes), returning None when there isn't
+    at least _MIN_HISTORICAL_SAMPLES worth of data to trust."""
+    row = (
+        db.query(
+            func.count(EngagementSnapshot.id).label("sample_size"),
+            func.avg(
+                (EngagementSnapshot.likes + EngagementSnapshot.comments + EngagementSnapshot.shares)
+                * 1.0
+                / EngagementSnapshot.impressions
+            ).label("avg_rate"),
+        )
+        .join(Post, Post.id == EngagementSnapshot.post_id)
+        .filter(
+            Post.brand_id == brand_id,
+            EngagementSnapshot.platform == platform,
+            EngagementSnapshot.impressions > 0,
+        )
+        .one()
+    )
+    sample_size = int(row.sample_size or 0)
+    if sample_size < _MIN_HISTORICAL_SAMPLES or row.avg_rate is None:
+        return None
+    return {"sample_size": sample_size, "average_engagement_rate": float(row.avg_rate)}
+
+
+def _historical_engagement_safely(
+    db: Session, brand_id: Any, platforms: list[str]
+) -> dict[str, dict[str, Any] | None]:
+    """Same degrade-on-failure contract as _brand_context_safely: a broken
+    query here (e.g. a transient DB issue) must not take the whole
+    Reviewer Engine node down — it just means this run falls back to a
+    pure LLM estimate for every platform, same as a brand with no history
+    yet."""
+    stats: dict[str, dict[str, Any] | None] = {}
+    for platform in platforms:
+        try:
+            stats[platform] = _historical_engagement_stats(db, brand_id, platform)
+        except Exception:
+            logger.warning(
+                "Reviewer Engine historical engagement lookup failed for platform %r",
+                platform,
+                exc_info=True,
+            )
+            stats[platform] = None
+    return stats
+
+
 def _strip_code_fence(text: str) -> str:
     cleaned = text.strip()
     if not cleaned.startswith("```"):
@@ -168,11 +253,22 @@ def _parse_platform_review(entry: dict) -> dict[str, Any]:
     if not isinstance(suggested_edits, str) or not suggested_edits.strip():
         raise ValueError("missing 'suggested_edits'")
 
+    # Issue #107 — predicted engagement is required per platform, same
+    # all-or-nothing parse contract as the fields above: a response that
+    # skips it degrades the whole review to the fixed fallback rather than
+    # silently shipping a review with no engagement prediction.
+    predicted_engagement_score = _clamp_score(entry.get("predicted_engagement_score"))
+    predicted_engagement_reasoning = entry.get("predicted_engagement_reasoning")
+    if not isinstance(predicted_engagement_reasoning, str) or not predicted_engagement_reasoning.strip():
+        raise ValueError("missing 'predicted_engagement_reasoning'")
+
     return {
         "score": score,
         "verdict": verdict.value,
         "issues": [str(issue) for issue in issues],
         "suggested_edits": suggested_edits.strip(),
+        "predicted_engagement_score": predicted_engagement_score,
+        "predicted_engagement_reasoning": predicted_engagement_reasoning.strip(),
     }
 
 
@@ -201,6 +297,8 @@ def _fallback_review(platforms: list[str]) -> dict[str, dict[str, Any]]:
             "verdict": _FALLBACK_VERDICT.value,
             "issues": [_FALLBACK_ISSUE],
             "suggested_edits": _FALLBACK_SUGGESTED_EDITS,
+            "predicted_engagement_score": _FALLBACK_ENGAGEMENT_SCORE,
+            "predicted_engagement_reasoning": _FALLBACK_ENGAGEMENT_REASONING,
         }
         for platform in platforms
     }
@@ -217,16 +315,39 @@ def _platforms_for(body_text: dict[str, Any]) -> list[str]:
     return list(body_text.keys())
 
 
+def _format_historical_engagement(historical_engagement: dict[str, dict[str, Any] | None], platforms: list[str]) -> str:
+    lines = []
+    for platform in platforms:
+        stats = historical_engagement.get(platform)
+        if stats is None:
+            lines.append(
+                f"- {platform}: insufficient historical data (fewer than "
+                f"{_MIN_HISTORICAL_SAMPLES} past posts with impressions) — "
+                "give a pure qualitative estimate based on the draft "
+                "content and brand context instead."
+            )
+        else:
+            lines.append(
+                f"- {platform}: {stats['sample_size']} historical posts, "
+                f"average engagement rate {stats['average_engagement_rate'] * 100:.2f}% "
+                "((likes + comments + shares) / impressions) — ground your "
+                "prediction in this real number and say so in your reasoning."
+            )
+    return "\n".join(lines)
+
+
 def _build_prompt(
     brand: Brand,
     brand_context: list[dict],
     body_text: dict[str, Any],
     platforms: list[str],
+    historical_engagement: dict[str, dict[str, Any] | None],
 ) -> str:
     industry = brand.industry or brand.name
     tone_descriptors = brand.tone_descriptors or []
     target_audience = brand.target_audience or "not specified"
     content_json = json.dumps({platform: body_text.get(platform, "") for platform in platforms})
+    historical_engagement_text = _format_historical_engagement(historical_engagement, platforms)
 
     return f"""You are a meticulous brand-voice, compliance, and
 platform-fit reviewer. You are given a finished draft post and must
@@ -246,6 +367,9 @@ Target audience: {target_audience}
 ## Draft post copy to review, per platform
 {content_json}
 
+## Historical engagement performance, per platform
+{historical_engagement_text}
+
 ## Task
 For EACH of these target platforms — {", ".join(platforms)} — critically
 evaluate that platform's draft copy against:
@@ -257,6 +381,11 @@ evaluate that platform's draft copy against:
    reviewer would flag.
 3. Platform fit — does it respect that platform's norms (length,
    formality, format conventions, audience expectations)?
+4. Predicted engagement — using the historical engagement performance
+   data above when it's available for that platform (cite the actual
+   numbers in your reasoning), or your best qualitative estimate when
+   historical data is insufficient, predict how well THIS draft will
+   perform relative to typical performance.
 
 Score each platform from 0 (severely off-brand, non-compliant, or wrong
 for the platform) to 100 (fully on-brand, compliant, and platform-
@@ -265,20 +394,29 @@ appropriate). Assign a verdict: "approve" for a score of 80 or higher
 (fundamental problems). List the SPECIFIC issues you found — never a
 generic "needs improvement" — and give SPECIFIC, actionable suggested
 edits: concrete rewording, a concrete fix, or a concrete rewritten
-passage, tied to what is actually wrong with THIS draft.
+passage, tied to what is actually wrong with THIS draft. Separately,
+score predicted engagement from 0 (very low predicted engagement) to 100
+(very high predicted engagement) and give a short (1-3 sentence)
+natural-language reasoning string for that prediction.
 
 Respond with a single JSON object of exactly this shape:
 {{"platforms": {{"<platform>": {{"score": <number 0-100>, "verdict":
 "approve"|"revise"|"reject", "issues": ["specific issue 1", "specific
 issue 2"], "suggested_edits": "specific, actionable edit instructions or
-a concrete rewritten passage"}}, ...}}}}
+a concrete rewritten passage", "predicted_engagement_score": <number
+0-100>, "predicted_engagement_reasoning": "short reasoning, citing
+historical numbers when they were provided above"}}, ...}}}}
 
 Respond with ONLY the JSON object. No markdown code fences, no extra text.
 """
 
 
 def _review_content(
-    brand: Brand, brand_context: list[dict], body_text: dict[str, Any], platforms: list[str]
+    brand: Brand,
+    brand_context: list[dict],
+    body_text: dict[str, Any],
+    platforms: list[str],
+    historical_engagement: dict[str, dict[str, Any] | None],
 ) -> tuple[dict[str, dict[str, Any]], str, int]:
     """Calls LLMProvider exclusively through its interface (never a direct
     vendor SDK import) — same degrade-on-failure contract as
@@ -287,7 +425,7 @@ def _review_content(
     usable review, must never take the pipeline down with it, just fall
     back to a fixed "needs manual review" verdict."""
     model = _default_model()
-    prompt = _build_prompt(brand, brand_context, body_text, platforms)
+    prompt = _build_prompt(brand, brand_context, body_text, platforms, historical_engagement)
     try:
         response = get_llm_provider().complete(prompt=prompt, model=model, temperature=0.2)
         platform_reviews = _parse_review(response.text, platforms)
@@ -309,6 +447,30 @@ def _overall_from_platforms(platform_reviews: dict[str, dict[str, Any]]) -> tupl
     return overall_score, overall_verdict
 
 
+def _overall_predicted_engagement(platform_reviews: dict[str, dict[str, Any]]) -> tuple[float, str]:
+    """Unlike the brand-alignment score/verdict (worst platform wins,
+    since a single off-brand platform is a real risk that must not be
+    masked), predicted engagement isn't a risk signal — it's averaged
+    across platforms so a strong-predicted-engagement platform and a
+    weak-predicted-engagement one net out to a representative overall
+    number rather than the post being judged solely by its worst channel.
+    Reasoning is the single platform's own reasoning when there's only
+    one, otherwise each platform's reasoning prefixed by its name so the
+    UI/API can show one short string without losing per-platform nuance."""
+    scores = [entry["predicted_engagement_score"] for entry in platform_reviews.values()]
+    overall_score = round(sum(scores) / len(scores), 1)
+
+    if len(platform_reviews) == 1:
+        (only_entry,) = platform_reviews.values()
+        reasoning = only_entry["predicted_engagement_reasoning"]
+    else:
+        reasoning = "; ".join(
+            f"{platform}: {entry['predicted_engagement_reasoning']}"
+            for platform, entry in platform_reviews.items()
+        )
+    return overall_score, reasoning
+
+
 def _reviewer_output(db: Session, post: Post) -> dict[str, Any]:
     brand = db.get(Brand, post.brand_id)
     if brand is None:
@@ -317,12 +479,18 @@ def _reviewer_output(db: Session, post: Post) -> dict[str, Any]:
     body_text = post.body_text or {}
     platforms = _platforms_for(body_text)
     brand_context = _brand_context_safely(db, brand.id)
+    historical_engagement = _historical_engagement_safely(db, brand.id, platforms)
 
     start = time.perf_counter()
-    platform_reviews, model, tokens = _review_content(brand, brand_context, body_text, platforms)
+    platform_reviews, model, tokens = _review_content(
+        brand, brand_context, body_text, platforms, historical_engagement
+    )
     latency_ms = (time.perf_counter() - start) * 1000
 
     overall_score, overall_verdict = _overall_from_platforms(platform_reviews)
+    predicted_engagement_score, predicted_engagement_reasoning = _overall_predicted_engagement(
+        platform_reviews
+    )
     cost = _estimate_cost(tokens)
 
     # Append an immutable ReviewFeedback row for this review pass — never
@@ -334,6 +502,8 @@ def _reviewer_output(db: Session, post: Post) -> dict[str, Any]:
         score=overall_score,
         verdict=overall_verdict,
         comments={"platforms": platform_reviews, "model": model},
+        predicted_engagement_score=predicted_engagement_score,
+        predicted_engagement_reasoning=predicted_engagement_reasoning,
     )
     db.add(feedback)
     db.flush()
@@ -349,6 +519,8 @@ def _reviewer_output(db: Session, post: Post) -> dict[str, Any]:
         "tokens": tokens,
         "cost": cost,
         "latency_ms": latency_ms,
+        "predicted_engagement_score": predicted_engagement_score,
+        "predicted_engagement_reasoning": predicted_engagement_reasoning,
     }
 
 
