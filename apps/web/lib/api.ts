@@ -338,3 +338,86 @@ export async function rescheduleReviewPost(
 
   return res.json();
 }
+
+// --- Social accounts (Issue #91) ---
+
+// Mirrors apps/api/models/social_account.py::SocialPlatform. "linkedin" is
+// the only value today, but this is kept as a string union (not a literal)
+// so the UI layer can stay written generically as more providers land.
+export type SocialPlatform = "linkedin";
+
+// Mirrors apps/api/models/social_account.py::SocialAccountStatus.
+export type SocialAccountStatus = "active" | "expired" | "revoked";
+
+// Mirrors apps/api/schemas/social_account.py::SocialAccountRead.
+export interface SocialAccount {
+  id: string;
+  brand_id: string;
+  platform: SocialPlatform;
+  external_account_id: string | null;
+  token_expires_at: string | null;
+  scopes: string[] | null;
+  status: SocialAccountStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+// Mirrors apps/api/schemas/social_account.py::AuthorizeUrlRead.
+export interface AuthorizeUrlResponse {
+  authorize_url: string;
+}
+
+// apps/api/routers/social_accounts.py mounts these under
+// /brands/{brand_id}/social-accounts — same brand-scoping convention as
+// calendarEventsUrl/reviewQueueUrl above.
+function socialAccountsUrl(brandId: string, suffix = ""): string {
+  return `${API_URL}/brands/${brandId}/social-accounts${suffix}`;
+}
+
+export async function fetchSocialAccounts(token: string, brandId: string): Promise<SocialAccount[]> {
+  const res = await fetch(socialAccountsUrl(brandId), {
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+// Starts the LinkedIn OAuth flow and returns the authorize URL to send the
+// browser to. Deliberately does not navigate itself (no `window.location`
+// here) — that's UI-layer behavior the caller performs, which keeps this
+// function trivially testable and matches how apps/api/routers/social_accounts.py
+// separates "give me a URL" (POST .../linkedin/connect) from the redirect
+// the browser does with it.
+export async function connectLinkedIn(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  const res = await fetch(socialAccountsUrl(brandId, "/linkedin/connect"), {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function disconnectSocialAccount(
+  token: string,
+  brandId: string,
+  accountId: string
+): Promise<SocialAccount> {
+  const res = await fetch(socialAccountsUrl(brandId, `/${accountId}`), {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
