@@ -7,20 +7,33 @@ import pytest
 from apps.api.models import IntegrationCall
 from packages.integrations.registry import get_social_publisher
 from packages.integrations.social.base import PublishResult, SocialPublisher
+from packages.integrations.social.facebook_provider import FacebookProvider
+from packages.integrations.social.instagram_provider import InstagramProvider
 from packages.integrations.social.linkedin_provider import LinkedInProvider
+from packages.integrations.social.threads_provider import ThreadsProvider
 from packages.integrations.social.x_provider import XProvider
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-# Domains only linkedin_provider.py / x_provider.py are allowed to
-# reference — everything else must go through SocialPublisher /
-# SocialOAuthProvider instead of talking to the vendor directly.
+# Domains only the matching provider file is allowed to reference —
+# everything else must go through SocialPublisher / SocialOAuthProvider
+# instead of talking to the vendor directly. Instagram/Facebook share
+# facebook.com/graph.facebook.com (same Meta Graph API host), so both
+# provider files are listed for that marker.
 VENDOR_MARKERS = {
-    "linkedin.com": "linkedin_provider.py",
-    "twitter.com": "x_provider.py",
+    "linkedin.com": ("linkedin_provider.py",),
+    "twitter.com": ("x_provider.py",),
+    "facebook.com": ("facebook_provider.py", "instagram_provider.py"),
+    "threads.net": ("threads_provider.py",),
 }
 
-ALLOWED_FILES = {"linkedin_provider.py", "x_provider.py"}
+ALLOWED_FILES = {
+    "linkedin_provider.py",
+    "x_provider.py",
+    "facebook_provider.py",
+    "instagram_provider.py",
+    "threads_provider.py",
+}
 
 
 def _mock_response(json_data: dict | None = None, status_code: int = 200, headers=None) -> MagicMock:
@@ -63,6 +76,33 @@ def test_registry_resolves_x_publisher() -> None:
     assert isinstance(get_social_publisher("x"), XProvider)
 
 
+def test_facebook_provider_implements_social_publisher() -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+    assert isinstance(provider, SocialPublisher)
+
+
+def test_instagram_provider_implements_social_publisher() -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+    assert isinstance(provider, SocialPublisher)
+
+
+def test_threads_provider_implements_social_publisher() -> None:
+    provider = ThreadsProvider(client_id="cid", client_secret="secret")
+    assert isinstance(provider, SocialPublisher)
+
+
+def test_registry_resolves_facebook_publisher() -> None:
+    assert isinstance(get_social_publisher("facebook"), FacebookProvider)
+
+
+def test_registry_resolves_instagram_publisher() -> None:
+    assert isinstance(get_social_publisher("instagram"), InstagramProvider)
+
+
+def test_registry_resolves_threads_publisher() -> None:
+    assert isinstance(get_social_publisher("threads"), ThreadsProvider)
+
+
 def test_registry_unknown_platform_raises() -> None:
     with pytest.raises(ValueError, match="Unknown social platform"):
         get_social_publisher("tiktok")
@@ -84,7 +124,7 @@ def test_no_other_file_references_linkedin_or_x_vendor_urls() -> None:
             text = py_file.read_text()
         except (UnicodeDecodeError, OSError):
             continue
-        for marker in ("linkedin.com", "twitter.com", "api.x.com", "://x.com"):
+        for marker in (*VENDOR_MARKERS, "api.x.com", "://x.com"):
             if marker in text:
                 offenders.append(f"{py_file.relative_to(REPO_ROOT)} references {marker!r}")
     assert offenders == [], "\n".join(offenders)
@@ -695,6 +735,835 @@ def test_x_get_engagement_logs_integration_call(db_session) -> None:
     logged = (
         db_session.query(IntegrationCall)
         .filter_by(provider="x", capability="get_engagement")
+        .order_by(IntegrationCall.created_at.desc())
+        .first()
+    )
+    assert logged is not None
+    assert logged.success is True
+
+
+# ---------------------------------------------------------------------
+# Facebook: OAuth-connection interface, same shape as LinkedIn/X's above —
+# exercised here for coverage since #110 is what introduces FacebookProvider.
+# ---------------------------------------------------------------------
+
+
+def test_facebook_authorize_url_includes_state_and_scopes() -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+    url = provider.authorize_url(state="signed-state", redirect_uri="https://app.test/callback")
+
+    assert url.startswith(FacebookProvider.AUTHORIZE_URL)
+    assert "client_id=cid" in url
+    assert "state=signed-state" in url
+    assert "pages_manage_posts" in url
+
+
+def test_facebook_exchange_code_returns_tokens_and_fetches_page_id() -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+    token_response = _mock_response({"access_token": "at-123", "expires_in": 5184000})
+    page_response = _mock_response({"id": "page-42", "name": "Acme Page"})
+
+    with patch("httpx.post", return_value=token_response), patch(
+        "httpx.get", return_value=page_response
+    ):
+        tokens = provider.exchange_code(code="auth-code", redirect_uri="https://app.test/callback")
+
+    assert tokens.access_token == "at-123"
+    assert tokens.refresh_token is None
+    assert tokens.external_account_id == "page-42"
+    assert tokens.expires_at is not None
+
+
+def test_facebook_is_token_valid_true_on_200() -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+    with patch("httpx.get", return_value=_mock_response({"id": "page-42"}, status_code=200)):
+        assert provider.is_token_valid("some-token") is True
+
+
+def test_facebook_is_token_valid_false_when_platform_rejects_it() -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+    with patch("httpx.get", return_value=_mock_response(status_code=401)):
+        assert provider.is_token_valid("revoked-token") is False
+
+
+# ---------------------------------------------------------------------
+# Facebook: successful publish
+# ---------------------------------------------------------------------
+
+
+def test_facebook_publish_success_returns_populated_result(db_session) -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+    page_response = _mock_response({"id": "page-42"})
+    post_response = _mock_response({"id": "page-42_999"})
+
+    with patch("httpx.get", return_value=page_response), patch(
+        "httpx.post", return_value=post_response
+    ):
+        result = provider.publish(access_token="good-token", content="hello world")
+
+    assert isinstance(result, PublishResult)
+    assert result.success is True
+    assert result.platform_post_id == "page-42_999"
+    assert result.platform_post_url is not None
+    assert result.error is None
+    assert result.refreshed_tokens is None
+
+
+def test_facebook_publish_success_logs_integration_call(db_session) -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+    page_response = _mock_response({"id": "page-42"})
+    post_response = _mock_response({"id": "page-42_999"})
+
+    with patch("httpx.get", return_value=page_response), patch(
+        "httpx.post", return_value=post_response
+    ):
+        provider.publish(access_token="good-token", content="hello world")
+
+    logged = (
+        db_session.query(IntegrationCall)
+        .filter_by(provider="facebook", capability="publish")
+        .order_by(IntegrationCall.created_at.desc())
+        .first()
+    )
+    assert logged is not None
+    assert logged.success is True
+
+
+def test_facebook_publish_includes_link_when_media_urls_given(db_session) -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+    page_response = _mock_response({"id": "page-42"})
+    post_response = _mock_response({"id": "page-42_999"})
+
+    with patch("httpx.get", return_value=page_response), patch(
+        "httpx.post", return_value=post_response
+    ) as mock_post:
+        result = provider.publish(
+            access_token="good-token",
+            content="hello world",
+            media_urls=["https://cdn.test/image.png"],
+        )
+
+    assert result.success is True
+    assert mock_post.call_args.kwargs["json"]["link"] == "https://cdn.test/image.png"
+
+
+# ---------------------------------------------------------------------
+# Facebook: expired token -> transparent refresh + retry
+# ---------------------------------------------------------------------
+
+
+def test_facebook_publish_refreshes_and_retries_once_on_expired_token(db_session) -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+
+    expired_page_response = _mock_response(status_code=401)
+    refresh_response = _mock_response({"access_token": "new-token", "expires_in": 5184000})
+    retry_page_response = _mock_response({"id": "page-42"})
+    retry_post_response = _mock_response({"id": "page-42_777"})
+
+    get_calls = [expired_page_response, retry_page_response]
+    post_calls = [refresh_response, retry_post_response]
+
+    with patch("httpx.get", side_effect=get_calls) as mock_get, patch(
+        "httpx.post", side_effect=post_calls
+    ) as mock_post:
+        result = provider.publish(
+            access_token="stale-token", content="hello world", refresh_token="prior-long-lived-token"
+        )
+
+    assert result.success is True
+    assert result.platform_post_id == "page-42_777"
+    assert result.refreshed_tokens is not None
+    assert result.refreshed_tokens.access_token == "new-token"
+    assert mock_get.call_count == 2
+    assert mock_post.call_count == 2
+
+
+def test_facebook_publish_expired_token_not_surfaced_as_failure(db_session) -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+
+    get_calls = [_mock_response(status_code=401), _mock_response({"id": "page-42"})]
+    post_calls = [
+        _mock_response({"access_token": "new-token"}),
+        _mock_response({"id": "id-1"}),
+    ]
+
+    with patch("httpx.get", side_effect=get_calls), patch("httpx.post", side_effect=post_calls):
+        result = provider.publish(
+            access_token="stale-token", content="hello world", refresh_token="prior-token"
+        )
+
+    assert result.success is True
+    assert result.error is None
+
+
+def test_facebook_publish_expired_token_without_refresh_token_fails(db_session) -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=401)):
+        result = provider.publish(access_token="stale-token", content="hello world")
+
+    assert result.success is False
+    assert result.error is not None
+    assert "refresh" in result.error.lower()
+
+
+def test_facebook_publish_refresh_failure_surfaces_as_real_failure(db_session) -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=401)), patch(
+        "httpx.post", return_value=_mock_response(status_code=400)
+    ):
+        result = provider.publish(
+            access_token="stale-token", content="hello world", refresh_token="bad-token"
+        )
+
+    assert result.success is False
+    assert result.error is not None
+
+
+# ---------------------------------------------------------------------
+# Facebook: hard (non-token) failures
+# ---------------------------------------------------------------------
+
+
+def test_facebook_publish_hard_http_failure_returns_failed_result(db_session) -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response({"id": "page-42"})), patch(
+        "httpx.post", return_value=_mock_response(status_code=500)
+    ):
+        result = provider.publish(access_token="good-token", content="hello world")
+
+    assert result.success is False
+    assert result.error is not None
+
+
+def test_facebook_publish_hard_failure_logged(db_session) -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response({"id": "page-42"})), patch(
+        "httpx.post", return_value=_mock_response(status_code=500)
+    ):
+        provider.publish(access_token="good-token", content="hello world")
+
+    logged = (
+        db_session.query(IntegrationCall)
+        .filter_by(provider="facebook", capability="publish")
+        .order_by(IntegrationCall.created_at.desc())
+        .first()
+    )
+    assert logged is not None
+    assert logged.success is False
+    assert logged.error_message is not None
+
+
+# ---------------------------------------------------------------------
+# Facebook: get_engagement()
+# ---------------------------------------------------------------------
+
+
+def test_facebook_get_engagement_success_returns_metrics(db_session) -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+
+    with patch(
+        "httpx.get",
+        return_value=_mock_response(
+            {
+                "likes": {"summary": {"total_count": 10}},
+                "comments": {"summary": {"total_count": 4}},
+                "shares": {"count": 2},
+            }
+        ),
+    ):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="page-42_999")
+
+    assert result.success is True
+    assert result.rate_limited is False
+    assert result.metrics.likes == 10
+    assert result.metrics.comments == 4
+    assert result.metrics.shares == 2
+    assert result.metrics.impressions == 0
+
+
+def test_facebook_get_engagement_rate_limited_returns_flag_not_raise(db_session) -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=429)):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="page-42_999")
+
+    assert result.success is False
+    assert result.rate_limited is True
+    assert result.metrics is None
+
+
+def test_facebook_get_engagement_hard_http_failure_returns_failed_result(db_session) -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=500)):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="page-42_999")
+
+    assert result.success is False
+    assert result.rate_limited is False
+    assert result.error is not None
+
+
+def test_facebook_get_engagement_logs_integration_call(db_session) -> None:
+    provider = FacebookProvider(client_id="cid", client_secret="secret")
+
+    with patch(
+        "httpx.get",
+        return_value=_mock_response(
+            {"likes": {"summary": {"total_count": 1}}, "comments": {"summary": {"total_count": 0}}, "shares": {"count": 0}}
+        ),
+    ):
+        provider.get_engagement(access_token="good-token", platform_post_id="page-42_999")
+
+    logged = (
+        db_session.query(IntegrationCall)
+        .filter_by(provider="facebook", capability="get_engagement")
+        .order_by(IntegrationCall.created_at.desc())
+        .first()
+    )
+    assert logged is not None
+    assert logged.success is True
+
+
+# ---------------------------------------------------------------------
+# Instagram: OAuth-connection interface
+# ---------------------------------------------------------------------
+
+
+def test_instagram_authorize_url_includes_state_and_scopes() -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+    url = provider.authorize_url(state="signed-state", redirect_uri="https://app.test/callback")
+
+    assert url.startswith(InstagramProvider.AUTHORIZE_URL)
+    assert "client_id=cid" in url
+    assert "state=signed-state" in url
+    assert "instagram_content_publish" in url
+
+
+def test_instagram_exchange_code_returns_tokens_and_fetches_ig_user_id() -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+    token_response = _mock_response({"access_token": "at-123", "expires_in": 5184000})
+    accounts_response = _mock_response(
+        {"data": [{"id": "page-1", "instagram_business_account": {"id": "17841400000000000"}}]}
+    )
+
+    with patch("httpx.post", return_value=token_response), patch(
+        "httpx.get", return_value=accounts_response
+    ):
+        tokens = provider.exchange_code(code="auth-code", redirect_uri="https://app.test/callback")
+
+    assert tokens.access_token == "at-123"
+    assert tokens.external_account_id == "17841400000000000"
+
+
+def test_instagram_exchange_code_handles_no_linked_ig_account() -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+    token_response = _mock_response({"access_token": "at-123"})
+    accounts_response = _mock_response({"data": [{"id": "page-1"}]})
+
+    with patch("httpx.post", return_value=token_response), patch(
+        "httpx.get", return_value=accounts_response
+    ):
+        tokens = provider.exchange_code(code="auth-code", redirect_uri="https://app.test/callback")
+
+    assert tokens.external_account_id is None
+
+
+def test_instagram_is_token_valid_true_on_200() -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+    with patch("httpx.get", return_value=_mock_response({"data": []}, status_code=200)):
+        assert provider.is_token_valid("some-token") is True
+
+
+def test_instagram_is_token_valid_false_when_platform_rejects_it() -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+    with patch("httpx.get", return_value=_mock_response(status_code=401)):
+        assert provider.is_token_valid("revoked-token") is False
+
+
+# ---------------------------------------------------------------------
+# Instagram: publish requires media
+# ---------------------------------------------------------------------
+
+
+def test_instagram_publish_without_media_fails_without_any_http_call() -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get") as mock_get, patch("httpx.post") as mock_post:
+        result = provider.publish(access_token="good-token", content="hello world")
+
+    assert result.success is False
+    assert "media" in result.error.lower()
+    mock_get.assert_not_called()
+    mock_post.assert_not_called()
+
+
+# ---------------------------------------------------------------------
+# Instagram: successful publish (two-step container -> publish)
+# ---------------------------------------------------------------------
+
+
+def test_instagram_publish_success_returns_populated_result(db_session) -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+    accounts_response = _mock_response(
+        {"data": [{"id": "page-1", "instagram_business_account": {"id": "ig-user-1"}}]}
+    )
+    container_response = _mock_response({"id": "container-1"})
+    publish_response = _mock_response({"id": "ig-post-1"})
+
+    with patch("httpx.get", return_value=accounts_response), patch(
+        "httpx.post", side_effect=[container_response, publish_response]
+    ):
+        result = provider.publish(
+            access_token="good-token",
+            content="hello world",
+            media_urls=["https://cdn.test/photo.png"],
+        )
+
+    assert isinstance(result, PublishResult)
+    assert result.success is True
+    assert result.platform_post_id == "ig-post-1"
+    assert result.platform_post_url is not None
+    assert result.error is None
+
+
+def test_instagram_publish_success_logs_integration_call(db_session) -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+    accounts_response = _mock_response(
+        {"data": [{"id": "page-1", "instagram_business_account": {"id": "ig-user-1"}}]}
+    )
+    container_response = _mock_response({"id": "container-1"})
+    publish_response = _mock_response({"id": "ig-post-1"})
+
+    with patch("httpx.get", return_value=accounts_response), patch(
+        "httpx.post", side_effect=[container_response, publish_response]
+    ):
+        provider.publish(
+            access_token="good-token",
+            content="hello world",
+            media_urls=["https://cdn.test/photo.png"],
+        )
+
+    logged = (
+        db_session.query(IntegrationCall)
+        .filter_by(provider="instagram", capability="publish")
+        .order_by(IntegrationCall.created_at.desc())
+        .first()
+    )
+    assert logged is not None
+    assert logged.success is True
+
+
+def test_instagram_publish_fails_when_no_ig_account_linked(db_session) -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+    accounts_response = _mock_response({"data": [{"id": "page-1"}]})
+
+    with patch("httpx.get", return_value=accounts_response), patch("httpx.post") as mock_post:
+        result = provider.publish(
+            access_token="good-token",
+            content="hello world",
+            media_urls=["https://cdn.test/photo.png"],
+        )
+
+    assert result.success is False
+    assert "instagram" in result.error.lower()
+    mock_post.assert_not_called()
+
+
+# ---------------------------------------------------------------------
+# Instagram: expired token -> transparent refresh + retry
+# ---------------------------------------------------------------------
+
+
+def test_instagram_publish_refreshes_and_retries_once_on_expired_token(db_session) -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+
+    expired_accounts_response = _mock_response(status_code=401)
+    retry_accounts_response = _mock_response(
+        {"data": [{"id": "page-1", "instagram_business_account": {"id": "ig-user-1"}}]}
+    )
+    refresh_response = _mock_response({"access_token": "new-token", "expires_in": 5184000})
+    container_response = _mock_response({"id": "container-1"})
+    publish_response = _mock_response({"id": "ig-post-9"})
+
+    get_calls = [expired_accounts_response, retry_accounts_response]
+    post_calls = [refresh_response, container_response, publish_response]
+
+    with patch("httpx.get", side_effect=get_calls) as mock_get, patch(
+        "httpx.post", side_effect=post_calls
+    ) as mock_post:
+        result = provider.publish(
+            access_token="stale-token",
+            content="hello world",
+            media_urls=["https://cdn.test/photo.png"],
+            refresh_token="prior-long-lived-token",
+        )
+
+    assert result.success is True
+    assert result.platform_post_id == "ig-post-9"
+    assert result.refreshed_tokens is not None
+    assert result.refreshed_tokens.access_token == "new-token"
+    assert mock_get.call_count == 2
+    assert mock_post.call_count == 3
+
+
+def test_instagram_publish_expired_token_without_refresh_token_fails(db_session) -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=401)):
+        result = provider.publish(
+            access_token="stale-token",
+            content="hello world",
+            media_urls=["https://cdn.test/photo.png"],
+        )
+
+    assert result.success is False
+    assert "refresh" in result.error.lower()
+
+
+def test_instagram_publish_refresh_failure_surfaces_as_real_failure(db_session) -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=401)), patch(
+        "httpx.post", return_value=_mock_response(status_code=400)
+    ):
+        result = provider.publish(
+            access_token="stale-token",
+            content="hello world",
+            media_urls=["https://cdn.test/photo.png"],
+            refresh_token="bad-token",
+        )
+
+    assert result.success is False
+    assert result.error is not None
+
+
+# ---------------------------------------------------------------------
+# Instagram: hard (non-token) failures
+# ---------------------------------------------------------------------
+
+
+def test_instagram_publish_hard_http_failure_returns_failed_result(db_session) -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+    accounts_response = _mock_response(
+        {"data": [{"id": "page-1", "instagram_business_account": {"id": "ig-user-1"}}]}
+    )
+
+    with patch("httpx.get", return_value=accounts_response), patch(
+        "httpx.post", return_value=_mock_response(status_code=500)
+    ):
+        result = provider.publish(
+            access_token="good-token",
+            content="hello world",
+            media_urls=["https://cdn.test/photo.png"],
+        )
+
+    assert result.success is False
+    assert result.error is not None
+
+
+# ---------------------------------------------------------------------
+# Instagram: get_engagement()
+# ---------------------------------------------------------------------
+
+
+def test_instagram_get_engagement_success_returns_metrics(db_session) -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+
+    with patch(
+        "httpx.get",
+        return_value=_mock_response(
+            {
+                "data": [
+                    {"name": "likes", "values": [{"value": 12}]},
+                    {"name": "comments", "values": [{"value": 3}]},
+                    {"name": "saved", "values": [{"value": 5}]},
+                    {"name": "impressions", "values": [{"value": 400}]},
+                ]
+            }
+        ),
+    ):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="ig-post-1")
+
+    assert result.success is True
+    assert result.metrics.likes == 12
+    assert result.metrics.comments == 3
+    assert result.metrics.shares == 5
+    assert result.metrics.impressions == 400
+
+
+def test_instagram_get_engagement_rate_limited_returns_flag_not_raise(db_session) -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=429)):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="ig-post-1")
+
+    assert result.success is False
+    assert result.rate_limited is True
+    assert result.metrics is None
+
+
+def test_instagram_get_engagement_logs_integration_call(db_session) -> None:
+    provider = InstagramProvider(client_id="cid", client_secret="secret")
+
+    with patch(
+        "httpx.get",
+        return_value=_mock_response({"data": [{"name": "likes", "values": [{"value": 1}]}]}),
+    ):
+        provider.get_engagement(access_token="good-token", platform_post_id="ig-post-1")
+
+    logged = (
+        db_session.query(IntegrationCall)
+        .filter_by(provider="instagram", capability="get_engagement")
+        .order_by(IntegrationCall.created_at.desc())
+        .first()
+    )
+    assert logged is not None
+    assert logged.success is True
+
+
+# ---------------------------------------------------------------------
+# Threads: OAuth-connection interface
+# ---------------------------------------------------------------------
+
+
+def test_threads_authorize_url_includes_state_and_scopes() -> None:
+    provider = ThreadsProvider(client_id="cid", client_secret="secret")
+    url = provider.authorize_url(state="signed-state", redirect_uri="https://app.test/callback")
+
+    assert url.startswith(ThreadsProvider.AUTHORIZE_URL)
+    assert "client_id=cid" in url
+    assert "state=signed-state" in url
+    assert "threads_content_publish" in url
+
+
+def test_threads_exchange_code_returns_tokens_from_response_directly() -> None:
+    # Unlike LinkedIn/X/Facebook/Instagram, Threads' token-exchange response
+    # includes user_id directly — no separate userinfo call is needed.
+    provider = ThreadsProvider(client_id="cid", client_secret="secret")
+    token_response = _mock_response(
+        {"access_token": "at-123", "user_id": 999888777, "expires_in": 3600}
+    )
+
+    with patch("httpx.post", return_value=token_response) as mock_post, patch(
+        "httpx.get"
+    ) as mock_get:
+        tokens = provider.exchange_code(code="auth-code", redirect_uri="https://app.test/callback")
+
+    assert tokens.access_token == "at-123"
+    assert tokens.external_account_id == "999888777"
+    assert tokens.expires_at is not None
+    mock_get.assert_not_called()
+    mock_post.assert_called_once()
+
+
+def test_threads_is_token_valid_true_on_200() -> None:
+    provider = ThreadsProvider(client_id="cid", client_secret="secret")
+    with patch("httpx.get", return_value=_mock_response({"id": "user-1"}, status_code=200)):
+        assert provider.is_token_valid("some-token") is True
+
+
+def test_threads_is_token_valid_false_when_platform_rejects_it() -> None:
+    provider = ThreadsProvider(client_id="cid", client_secret="secret")
+    with patch("httpx.get", return_value=_mock_response(status_code=401)):
+        assert provider.is_token_valid("revoked-token") is False
+
+
+# ---------------------------------------------------------------------
+# Threads: successful publish (two-step container -> publish, text-only ok)
+# ---------------------------------------------------------------------
+
+
+def test_threads_publish_success_returns_populated_result(db_session) -> None:
+    provider = ThreadsProvider(client_id="cid", client_secret="secret")
+    me_response = _mock_response({"id": "user-1"})
+    container_response = _mock_response({"id": "container-1"})
+    publish_response = _mock_response({"id": "thread-1"})
+
+    with patch("httpx.get", return_value=me_response), patch(
+        "httpx.post", side_effect=[container_response, publish_response]
+    ):
+        result = provider.publish(access_token="good-token", content="hello world")
+
+    assert isinstance(result, PublishResult)
+    assert result.success is True
+    assert result.platform_post_id == "thread-1"
+    assert result.platform_post_url is not None
+    assert result.error is None
+
+
+def test_threads_publish_success_logs_integration_call(db_session) -> None:
+    provider = ThreadsProvider(client_id="cid", client_secret="secret")
+    me_response = _mock_response({"id": "user-1"})
+    container_response = _mock_response({"id": "container-1"})
+    publish_response = _mock_response({"id": "thread-1"})
+
+    with patch("httpx.get", return_value=me_response), patch(
+        "httpx.post", side_effect=[container_response, publish_response]
+    ):
+        provider.publish(access_token="good-token", content="hello world")
+
+    logged = (
+        db_session.query(IntegrationCall)
+        .filter_by(provider="threads", capability="publish")
+        .order_by(IntegrationCall.created_at.desc())
+        .first()
+    )
+    assert logged is not None
+    assert logged.success is True
+
+
+def test_threads_publish_with_media_sets_image_body(db_session) -> None:
+    provider = ThreadsProvider(client_id="cid", client_secret="secret")
+    me_response = _mock_response({"id": "user-1"})
+    container_response = _mock_response({"id": "container-1"})
+    publish_response = _mock_response({"id": "thread-1"})
+
+    with patch("httpx.get", return_value=me_response), patch(
+        "httpx.post", side_effect=[container_response, publish_response]
+    ) as mock_post:
+        result = provider.publish(
+            access_token="good-token",
+            content="hello world",
+            media_urls=["https://cdn.test/image.png"],
+        )
+
+    assert result.success is True
+    first_call_body = mock_post.call_args_list[0].kwargs["json"]
+    assert first_call_body["media_type"] == "IMAGE"
+    assert first_call_body["image_url"] == "https://cdn.test/image.png"
+
+
+# ---------------------------------------------------------------------
+# Threads: expired token -> transparent refresh + retry
+# ---------------------------------------------------------------------
+
+
+def test_threads_publish_refreshes_and_retries_once_on_expired_token(db_session) -> None:
+    provider = ThreadsProvider(client_id="cid", client_secret="secret")
+
+    expired_me_response = _mock_response(status_code=401)
+    refresh_response = _mock_response({"access_token": "new-token", "expires_in": 5184000})
+    retry_me_response = _mock_response({"id": "user-1"})
+    container_response = _mock_response({"id": "container-1"})
+    publish_response = _mock_response({"id": "thread-9"})
+
+    get_calls = [expired_me_response, refresh_response, retry_me_response]
+    post_calls = [container_response, publish_response]
+
+    with patch("httpx.get", side_effect=get_calls) as mock_get, patch(
+        "httpx.post", side_effect=post_calls
+    ) as mock_post:
+        result = provider.publish(
+            access_token="stale-token", content="hello world", refresh_token="prior-token"
+        )
+
+    assert result.success is True
+    assert result.platform_post_id == "thread-9"
+    assert result.refreshed_tokens is not None
+    assert result.refreshed_tokens.access_token == "new-token"
+    assert mock_get.call_count == 3
+    assert mock_post.call_count == 2
+
+
+def test_threads_publish_expired_token_without_refresh_token_fails(db_session) -> None:
+    provider = ThreadsProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=401)):
+        result = provider.publish(access_token="stale-token", content="hello world")
+
+    assert result.success is False
+    assert "refresh" in result.error.lower()
+
+
+def test_threads_publish_refresh_failure_surfaces_as_real_failure(db_session) -> None:
+    provider = ThreadsProvider(client_id="cid", client_secret="secret")
+
+    get_calls = [_mock_response(status_code=401), _mock_response(status_code=400)]
+
+    with patch("httpx.get", side_effect=get_calls):
+        result = provider.publish(
+            access_token="stale-token", content="hello world", refresh_token="bad-token"
+        )
+
+    assert result.success is False
+    assert result.error is not None
+
+
+# ---------------------------------------------------------------------
+# Threads: hard (non-token) failures
+# ---------------------------------------------------------------------
+
+
+def test_threads_publish_hard_http_failure_returns_failed_result(db_session) -> None:
+    provider = ThreadsProvider(client_id="cid", client_secret="secret")
+    me_response = _mock_response({"id": "user-1"})
+
+    with patch("httpx.get", return_value=me_response), patch(
+        "httpx.post", return_value=_mock_response(status_code=500)
+    ):
+        result = provider.publish(access_token="good-token", content="hello world")
+
+    assert result.success is False
+    assert result.error is not None
+
+
+# ---------------------------------------------------------------------
+# Threads: get_engagement()
+# ---------------------------------------------------------------------
+
+
+def test_threads_get_engagement_success_returns_metrics(db_session) -> None:
+    provider = ThreadsProvider(client_id="cid", client_secret="secret")
+
+    with patch(
+        "httpx.get",
+        return_value=_mock_response(
+            {
+                "data": [
+                    {"name": "likes", "values": [{"value": 7}]},
+                    {"name": "replies", "values": [{"value": 1}]},
+                    {"name": "reposts", "values": [{"value": 2}]},
+                    {"name": "views", "values": [{"value": 50}]},
+                ]
+            }
+        ),
+    ):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="thread-1")
+
+    assert result.success is True
+    assert result.metrics.likes == 7
+    assert result.metrics.comments == 1
+    assert result.metrics.shares == 2
+    assert result.metrics.impressions == 50
+
+
+def test_threads_get_engagement_rate_limited_returns_flag_not_raise(db_session) -> None:
+    provider = ThreadsProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=429)):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="thread-1")
+
+    assert result.success is False
+    assert result.rate_limited is True
+    assert result.metrics is None
+
+
+def test_threads_get_engagement_logs_integration_call(db_session) -> None:
+    provider = ThreadsProvider(client_id="cid", client_secret="secret")
+
+    with patch(
+        "httpx.get",
+        return_value=_mock_response({"data": [{"name": "likes", "values": [{"value": 1}]}]}),
+    ):
+        provider.get_engagement(access_token="good-token", platform_post_id="thread-1")
+
+    logged = (
+        db_session.query(IntegrationCall)
+        .filter_by(provider="threads", capability="get_engagement")
         .order_by(IntegrationCall.created_at.desc())
         .first()
     )

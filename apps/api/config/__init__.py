@@ -36,6 +36,17 @@ class Settings(BaseSettings):
     # XProvider uses today.
     x_api_key: str | None = None
 
+    # Instagram, Threads, and Facebook Page publishing are all Meta Graph
+    # API products registered under one Meta developer app — unlike
+    # LinkedIn/X, they share a single client id/secret pair rather than
+    # each getting its own.
+    meta_app_id: str | None = None
+    meta_app_secret: str | None = None
+
+    instagram_redirect_uri: str | None = None
+    threads_redirect_uri: str | None = None
+    facebook_redirect_uri: str | None = None
+
     search_provider: str = "tavily"
     llm_provider: str = "openrouter"
     storage_provider: str = "supabase"

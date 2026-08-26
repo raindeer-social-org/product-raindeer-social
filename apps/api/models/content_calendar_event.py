@@ -8,9 +8,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from apps.api.config.database import Base
 
-# Platforms #30's publishing adapters actually support — kept in sync with
-# that issue's scope so this table can't hold events no adapter can publish.
-SUPPORTED_PLATFORMS = ("linkedin", "x")
+# Platforms #30/#108/#109/#110's publishing adapters actually support —
+# kept in sync with those issues' scope so this table can't hold events no
+# adapter can publish.
+SUPPORTED_PLATFORMS = ("linkedin", "x", "instagram", "threads", "facebook")
 
 
 class CalendarEventStatus(str, enum.Enum):
