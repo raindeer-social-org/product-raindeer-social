@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -63,6 +63,24 @@ class Post(Base):
         nullable=False,
         default=PipelineStage.RESEARCH,
     )
+
+    # Written by the Generation Engine's batch mode (Issue #106) — a shared
+    # id linking every Post produced by the same batch generation run, so a
+    # human can be shown "the other N-1 variants" for a post they're
+    # reviewing. NULL for every Post produced by the (default, unchanged)
+    # single-post generation path — those have no siblings, so there's
+    # nothing to group. Not a ForeignKey to another table: it's a bare
+    # shared value across sibling Post rows, the same "group id with no
+    # row of its own" shape LangGraph's thread_id uses.
+    variant_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    # This Post's 1-based position within variant_group_id (1 for the
+    # original post that triggered the run, 2..N for the additional
+    # sibling Posts batch mode creates). Purely presentational ordering —
+    # nothing in the pipeline branches on it. NULL alongside
+    # variant_group_id for non-batch Posts.
+    variant_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Written by the Generation Engine (Issue #21) — a dict keyed by
     # platform (e.g. {"linkedin": "...", "x": "..."}), matching

@@ -113,15 +113,21 @@ def _copy_payload() -> dict:
     }
 
 
-def _run_node(db_session, post: Post, creative_brief: dict | None = None) -> dict:
+def _run_node(
+    db_session,
+    post: Post,
+    creative_brief: dict | None = None,
+    generation_options: dict | None = None,
+) -> dict:
     node = build_generation_node(db_session)
-    return node(
-        {
-            "post_id": str(post.id),
-            "completed_stages": [],
-            "creative_brief": creative_brief if creative_brief is not None else {},
-        }
-    )
+    state = {
+        "post_id": str(post.id),
+        "completed_stages": [],
+        "creative_brief": creative_brief if creative_brief is not None else {},
+    }
+    if generation_options is not None:
+        state["generation_options"] = generation_options
+    return node(state)
 
 
 @pytest.fixture()
@@ -392,3 +398,266 @@ def test_pipeline_logs_agent_run_with_agent_type_generation_including_token_and_
 
     db_session.refresh(post)
     assert post.body_text == _copy_payload()
+
+
+# --- batch mode (Issue #106) — additive, explicitly-requested only --------
+
+
+def test_batch_mode_off_by_default_leaves_variant_columns_null(db_session) -> None:
+    """The default path (no "generation_options" in state at all — the
+    calendar-slot-triggered flow's exact shape) must behave identically to
+    before #106: a single Post, no variant_group_id/variant_index set."""
+    post = _setup_post(db_session)
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = _llm_response(_copy_payload())
+        result = _run_node(db_session, post, _creative_brief())
+
+    assert "batch" not in result["generation_output"]
+    db_session.refresh(post)
+    assert post.variant_group_id is None
+    assert post.variant_index is None
+
+
+def test_batch_mode_false_behaves_identically_to_default(db_session) -> None:
+    """generation_options present but batch falsy is still the single-Post
+    path — batch mode only activates when explicitly truthy."""
+    post = _setup_post(db_session)
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = _llm_response(_copy_payload())
+        result = _run_node(
+            db_session, post, _creative_brief(), generation_options={"batch": False}
+        )
+
+    assert "batch" not in result["generation_output"]
+    db_session.refresh(post)
+    assert post.variant_group_id is None
+
+
+def test_batch_mode_produces_default_variant_count_sibling_posts(db_session) -> None:
+    from packages.agents.pipeline.nodes.generation_engine import DEFAULT_BATCH_VARIANT_COUNT
+
+    post = _setup_post(db_session)
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = _llm_response(_copy_payload())
+        result = _run_node(db_session, post, _creative_brief(), generation_options={"batch": True})
+
+    output = result["generation_output"]
+    assert output["batch"] is True
+    assert output["variant_count"] == DEFAULT_BATCH_VARIANT_COUNT
+    assert len(output["variants"]) == DEFAULT_BATCH_VARIANT_COUNT
+    assert mock_llm.return_value.complete.call_count == DEFAULT_BATCH_VARIANT_COUNT
+
+    db_session.refresh(post)
+    group_id = post.variant_group_id
+    assert group_id is not None
+    assert post.variant_index == 1
+
+    siblings = (
+        db_session.query(Post)
+        .filter(Post.variant_group_id == group_id)
+        .order_by(Post.variant_index)
+        .all()
+    )
+    assert len(siblings) == DEFAULT_BATCH_VARIANT_COUNT
+    assert [sibling.variant_index for sibling in siblings] == list(
+        range(1, DEFAULT_BATCH_VARIANT_COUNT + 1)
+    )
+    # The original post is variant 1; every variant has its own body_text.
+    assert siblings[0].id == post.id
+    for sibling in siblings:
+        assert sibling.body_text == _copy_payload()
+        assert sibling.brand_id == post.brand_id
+        # Sibling variants must never inherit a calendar_event_id — see
+        # _clone_post_for_variant's docstring for why.
+        if sibling.id != post.id:
+            assert sibling.calendar_event_id is None
+
+
+def test_batch_mode_respects_custom_variant_count(db_session) -> None:
+    post = _setup_post(db_session)
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = _llm_response(_copy_payload())
+        result = _run_node(
+            db_session,
+            post,
+            _creative_brief(),
+            generation_options={"batch": True, "variant_count": 3},
+        )
+
+    assert result["generation_output"]["variant_count"] == 3
+    assert mock_llm.return_value.complete.call_count == 3
+
+
+def test_batch_mode_clamps_variant_count_below_minimum(db_session) -> None:
+    from packages.agents.pipeline.nodes.generation_engine import MIN_BATCH_VARIANT_COUNT
+
+    post = _setup_post(db_session)
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = _llm_response(_copy_payload())
+        result = _run_node(
+            db_session,
+            post,
+            _creative_brief(),
+            generation_options={"batch": True, "variant_count": 1},
+        )
+
+    assert result["generation_output"]["variant_count"] == MIN_BATCH_VARIANT_COUNT
+
+
+def test_batch_mode_clamps_variant_count_above_maximum(db_session) -> None:
+    from packages.agents.pipeline.nodes.generation_engine import MAX_BATCH_VARIANT_COUNT
+
+    post = _setup_post(db_session)
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = _llm_response(_copy_payload())
+        result = _run_node(
+            db_session,
+            post,
+            _creative_brief(),
+            generation_options={"batch": True, "variant_count": 999},
+        )
+
+    assert result["generation_output"]["variant_count"] == MAX_BATCH_VARIANT_COUNT
+
+
+def test_batch_mode_degrades_to_default_count_on_non_numeric_variant_count(db_session) -> None:
+    from packages.agents.pipeline.nodes.generation_engine import DEFAULT_BATCH_VARIANT_COUNT
+
+    post = _setup_post(db_session)
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = _llm_response(_copy_payload())
+        result = _run_node(
+            db_session,
+            post,
+            _creative_brief(),
+            generation_options={"batch": True, "variant_count": "not-a-number"},
+        )
+
+    assert result["generation_output"]["variant_count"] == DEFAULT_BATCH_VARIANT_COUNT
+
+
+def test_batch_mode_creates_a_post_version_row_per_variant(db_session) -> None:
+    post = _setup_post(db_session)
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = _llm_response(_copy_payload())
+        result = _run_node(
+            db_session,
+            post,
+            _creative_brief(),
+            generation_options={"batch": True, "variant_count": 3},
+        )
+
+    variant_post_ids = [uuid.UUID(variant["post_id"]) for variant in result["generation_output"]["variants"]]
+    assert len(set(variant_post_ids)) == 3
+
+    versions = (
+        db_session.query(PostVersion).filter(PostVersion.post_id.in_(variant_post_ids)).all()
+    )
+    assert len(versions) == 3
+
+
+def test_batch_mode_invokes_media_hook_once_per_variant_per_platform(db_session) -> None:
+    post = _setup_post(db_session)
+    brief = _creative_brief(linkedin_format="image", x_format="short_thread")
+
+    with patch(LLM_PATCH_TARGET) as mock_llm, patch(MEDIA_PATCH_TARGET) as mock_media:
+        mock_llm.return_value.complete.return_value = _llm_response(_copy_payload())
+        mock_media.return_value = {"status": "stubbed"}
+        _run_node(db_session, post, brief, generation_options={"batch": True, "variant_count": 3})
+
+    # linkedin needs media on every one of the 3 variants; x never does.
+    assert mock_media.call_count == 3
+    called_platforms = {call.args[1] for call in mock_media.call_args_list}
+    assert called_platforms == {"linkedin"}
+
+
+def test_batch_mode_still_logs_exactly_one_agent_run_row_for_generation(
+    db_session, thread_cleanup
+) -> None:
+    """graph.py's run_pipeline logs a single AgentRun row per stage
+    regardless of how many variants batch mode produced — see
+    generation_engine.py's module docstring and _generate_batch_output's."""
+    post = _setup_post(db_session)
+    thread_cleanup.append(str(post.id))
+
+    with (
+        patch(SEARCH_PATCH_TARGET) as mock_search,
+        patch(EMBED_PATCH_TARGET) as mock_embed,
+        patch(CREATIVE_LLM_PATCH_TARGET) as mock_creative_llm,
+        patch(LLM_PATCH_TARGET) as mock_generation_llm,
+    ):
+        mock_search.return_value.search.return_value = []
+        mock_embed.return_value.embed.return_value = [0.0] * 1536
+        mock_creative_llm.return_value.complete.return_value = _llm_response(
+            {
+                "linkedin": _creative_brief()["platforms"]["linkedin"],
+                "x": _creative_brief()["platforms"]["x"],
+            }
+        )
+        mock_generation_llm.return_value.complete.return_value = _llm_response(_copy_payload())
+
+        with get_postgres_checkpointer() as checkpointer:
+            list(
+                run_pipeline(
+                    db_session,
+                    post,
+                    checkpointer,
+                    generation_options={"batch": True, "variant_count": 3},
+                )
+            )
+
+    runs = (
+        db_session.query(AgentRun)
+        .filter(AgentRun.post_id == post.id, AgentRun.agent_type == AgentType.GENERATION)
+        .all()
+    )
+    assert len(runs) == 1
+    run = runs[0]
+    # tokens/cost are aggregated (summed) across all 3 variants, not just
+    # the triggering post's own generation call.
+    assert run.tokens == 200 * 3
+    assert run.cost is not None
+    assert run.cost > 0
+
+
+def test_calendar_triggered_run_pipeline_default_ignores_batch_entirely(
+    db_session, thread_cleanup
+) -> None:
+    """run_pipeline's default call shape — no generation_options kwarg at
+    all — is exactly what trigger.py uses; this pins that it still
+    produces a single, non-variant Post, unaffected by #106."""
+    post = _setup_post(db_session)
+    thread_cleanup.append(str(post.id))
+
+    with (
+        patch(SEARCH_PATCH_TARGET) as mock_search,
+        patch(EMBED_PATCH_TARGET) as mock_embed,
+        patch(CREATIVE_LLM_PATCH_TARGET) as mock_creative_llm,
+        patch(LLM_PATCH_TARGET) as mock_generation_llm,
+    ):
+        mock_search.return_value.search.return_value = []
+        mock_embed.return_value.embed.return_value = [0.0] * 1536
+        mock_creative_llm.return_value.complete.return_value = _llm_response(
+            {
+                "linkedin": _creative_brief()["platforms"]["linkedin"],
+                "x": _creative_brief()["platforms"]["x"],
+            }
+        )
+        mock_generation_llm.return_value.complete.return_value = _llm_response(_copy_payload())
+
+        with get_postgres_checkpointer() as checkpointer:
+            list(run_pipeline(db_session, post, checkpointer))
+
+    db_session.refresh(post)
+    assert post.variant_group_id is None
+    assert (
+        db_session.query(Post).filter(Post.brand_id == post.brand_id).count() == 1
+    )
