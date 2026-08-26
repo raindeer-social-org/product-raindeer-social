@@ -338,3 +338,87 @@ export async function rescheduleReviewPost(
 
   return res.json();
 }
+
+// --- Weekly reports (Issue #93) ---
+
+// Mirrors apps/api/schemas/analytics.py::PlatformAggregate — the
+// per-platform totals/averages row nested inside a report's `metrics`.
+export interface PlatformAggregate {
+  platform: string;
+  snapshot_count: number;
+  total_likes: number;
+  total_comments: number;
+  total_shares: number;
+  total_impressions: number;
+  average_likes: number;
+  average_comments: number;
+  average_shares: number;
+  average_impressions: number;
+}
+
+// Mirrors the plain-dict shape packages/agents/reporting/weekly_report.py's
+// _metrics_dict() builds and Report.metrics stores — the exact
+// analytics_aggregation.BrandSummary a report was generated from, minus
+// the brand_id/date-range wrapper BrandAnalyticsSummary adds. The API's
+// own ReportOut.metrics is typed `dict[str, Any]`, so this is typed
+// loosely too — render defensively rather than assuming every key exists.
+export interface ReportMetrics {
+  post_count?: number;
+  platforms?: PlatformAggregate[];
+  overall?: PlatformAggregate;
+  [key: string]: unknown;
+}
+
+// Mirrors apps/api/schemas/analytics.py::ReportOut. `recommendations` is
+// `list[Any]` server-side — weekly_report.py currently always writes
+// plain strings, but other shapes (e.g. `{title, detail}`) are
+// contractually possible, so callers should render generically.
+export interface Report {
+  id: string;
+  brand_id: string;
+  period_start: string;
+  period_end: string;
+  summary: string;
+  recommendations: unknown[];
+  metrics: ReportMetrics;
+  model: string | null;
+  created_at: string;
+}
+
+// Mirrors apps/api/schemas/analytics.py::ReportListOut.
+export interface ReportListOut {
+  brand_id: string;
+  reports: Report[];
+}
+
+// apps/api/routers/analytics.py mounts these under
+// /brands/{brand_id}/analytics/reports — same brand-scoping convention as
+// calendarEventsUrl/reviewQueueUrl above.
+function analyticsReportsUrl(brandId: string, suffix = ""): string {
+  return `${API_URL}/brands/${brandId}/analytics/reports${suffix}`;
+}
+
+export async function fetchReports(token: string, brandId: string): Promise<Report[]> {
+  const res = await fetch(analyticsReportsUrl(brandId), {
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  const data: ReportListOut = await res.json();
+  return data.reports;
+}
+
+export async function fetchReport(token: string, brandId: string, reportId: string): Promise<Report> {
+  const res = await fetch(analyticsReportsUrl(brandId, `/${reportId}`), {
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
