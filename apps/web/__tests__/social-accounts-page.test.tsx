@@ -118,6 +118,11 @@ describe("SocialAccountsPage", () => {
   it("shows an empty state when nothing is connected for the brand", async () => {
     renderPage();
 
+    // Wait for the actual fetch chain (AuthProvider -> BrandProvider ->
+    // this page's own fetchSocialAccounts) to settle before asserting —
+    // see the identical fix in onboarding-page.test.tsx for why a bare
+    // findByText can occasionally race a still-loading intermediate render.
+    await waitFor(() => expect(fetchSocialAccountsMock).toHaveBeenCalled());
     expect(await screen.findByText("No accounts connected")).toBeInTheDocument();
   });
 
