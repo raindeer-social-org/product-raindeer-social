@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import ReviewQueuePage from "@/app/review-queue/page";
 import { AuthProvider } from "@/lib/auth-context";
 import { BrandProvider } from "@/lib/brand-context";
+import { ToastProvider } from "@/components/ui/Toast";
 import type { ReviewQueuePost } from "@/lib/api";
 
 const fetchBrandsMock = vi.fn();
@@ -73,13 +74,17 @@ function makePost(overrides: Partial<ReviewQueuePost> = {}): ReviewQueuePost {
   };
 }
 
+// Mirrors the provider stack in app/layout.tsx — the page surfaces action
+// success/failure through useToast(), which requires ToastProvider above it.
 function renderPage() {
   return render(
-    <AuthProvider>
-      <BrandProvider>
-        <ReviewQueuePage />
-      </BrandProvider>
-    </AuthProvider>
+    <ToastProvider>
+      <AuthProvider>
+        <BrandProvider>
+          <ReviewQueuePage />
+        </BrandProvider>
+      </AuthProvider>
+    </ToastProvider>
   );
 }
 
