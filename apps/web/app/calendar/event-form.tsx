@@ -3,6 +3,9 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import type { CalendarEvent, CalendarEventInput, CalendarEventStatus, CalendarEventUpdateInput } from "@/lib/api";
+import { Button } from "@/components/ui/Button";
+import { Field, Input, Select, Textarea } from "@/components/ui/Input";
+import { Modal } from "@/components/ui/Modal";
 import { fromDatetimeLocalValue, toDatetimeLocalValue } from "./date-utils";
 import { CALENDAR_EVENT_STATUSES, STATUS_LABELS } from "./status";
 
@@ -93,107 +96,104 @@ export function EventForm({ event, defaultDate, onCancel, onCreate, onUpdate, on
   }
 
   return (
-    <div className="calendar-modal-backdrop" onClick={onCancel}>
-      <div
-        className="calendar-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={isEdit ? "Edit event" : "New event"}
-        onClick={(clickEvent) => clickEvent.stopPropagation()}
-      >
-        <h2>{isEdit ? "Edit event" : "New event"}</h2>
-        <form onSubmit={handleSubmit}>
-          <label className="calendar-form-field">
-            <span>Title</span>
-            <input value={title} onChange={(e) => setTitle(e.target.value)} required />
-          </label>
+    <Modal open onClose={onCancel} title={isEdit ? "Edit event" : "New event"}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Field label="Title" htmlFor="event-title">
+          <Input id="event-title" value={title} onChange={(e) => setTitle(e.target.value)} required />
+        </Field>
 
-          <label className="calendar-form-field">
-            <span>Description</span>
-            <textarea value={description ?? ""} onChange={(e) => setDescription(e.target.value)} rows={3} />
-          </label>
+        <Field label="Description" htmlFor="event-description">
+          <Textarea
+            id="event-description"
+            value={description ?? ""}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+          />
+        </Field>
 
-          <fieldset className="calendar-form-field calendar-form-fieldset">
-            <legend>Platforms</legend>
+        <fieldset className="space-y-1.5">
+          <legend className="block text-sm font-medium text-slate-700">Platforms</legend>
+          <div className="flex flex-wrap gap-4">
             {PLATFORM_OPTIONS.map((option) => (
-              <label key={option.value} className="calendar-checkbox">
+              <label key={option.value} className="flex items-center gap-2 text-sm text-slate-700">
                 <input
                   type="checkbox"
                   checked={platforms.includes(option.value)}
                   onChange={() => togglePlatform(option.value)}
+                  className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-2 focus:ring-brand-500/30"
                 />
                 {option.label}
               </label>
             ))}
-          </fieldset>
-
-          <label className="calendar-form-field">
-            <span>Format</span>
-            <input
-              value={desiredFormat}
-              onChange={(e) => setDesiredFormat(e.target.value)}
-              required
-              list="calendar-format-suggestions"
-              placeholder="e.g. image, video, carousel"
-            />
-            <datalist id="calendar-format-suggestions">
-              {FORMAT_SUGGESTIONS.map((suggestion) => (
-                <option key={suggestion} value={suggestion} />
-              ))}
-            </datalist>
-          </label>
-
-          <label className="calendar-form-field">
-            <span>Date and time</span>
-            <input
-              type="datetime-local"
-              value={targetDatetime}
-              onChange={(e) => setTargetDatetime(e.target.value)}
-              required
-            />
-          </label>
-
-          {isEdit && (
-            <label className="calendar-form-field">
-              <span>Status</span>
-              <select value={status} onChange={(e) => setStatus(e.target.value as CalendarEventStatus)}>
-                {CALENDAR_EVENT_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {STATUS_LABELS[s]}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-
-          {error && (
-            <p className="calendar-form-error" role="alert">
-              {error}
-            </p>
-          )}
-
-          <div className="calendar-form-actions">
-            {isEdit && (
-              <button
-                type="button"
-                className="calendar-delete-button"
-                onClick={handleDelete}
-                disabled={isSubmitting}
-              >
-                Delete
-              </button>
-            )}
-            <div className="calendar-form-actions-right">
-              <button type="button" onClick={onCancel} disabled={isSubmitting}>
-                Cancel
-              </button>
-              <button type="submit" className="calendar-submit-button" disabled={isSubmitting}>
-                {isEdit ? "Save" : "Create"}
-              </button>
-            </div>
           </div>
-        </form>
-      </div>
-    </div>
+        </fieldset>
+
+        <Field label="Format" htmlFor="event-format">
+          <Input
+            id="event-format"
+            value={desiredFormat}
+            onChange={(e) => setDesiredFormat(e.target.value)}
+            required
+            list="calendar-format-suggestions"
+            placeholder="e.g. image, video, carousel"
+          />
+          <datalist id="calendar-format-suggestions">
+            {FORMAT_SUGGESTIONS.map((suggestion) => (
+              <option key={suggestion} value={suggestion} />
+            ))}
+          </datalist>
+        </Field>
+
+        <Field label="Date and time" htmlFor="event-datetime">
+          <Input
+            id="event-datetime"
+            type="datetime-local"
+            value={targetDatetime}
+            onChange={(e) => setTargetDatetime(e.target.value)}
+            required
+          />
+        </Field>
+
+        {isEdit && (
+          <Field label="Status" htmlFor="event-status">
+            <Select
+              id="event-status"
+              value={status}
+              onChange={(e) => setStatus(e.target.value as CalendarEventStatus)}
+            >
+              {CALENDAR_EVENT_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {STATUS_LABELS[s]}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+
+        {error && (
+          <p role="alert" className="text-sm font-medium text-red-600">
+            {error}
+          </p>
+        )}
+
+        <div className="flex items-center justify-between gap-2 pt-2">
+          <div>
+            {isEdit && (
+              <Button type="button" variant="danger" onClick={handleDelete} disabled={isSubmitting}>
+                Delete
+              </Button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>
+              Cancel
+            </Button>
+            <Button type="submit" isLoading={isSubmitting}>
+              {isEdit ? "Save" : "Create"}
+            </Button>
+          </div>
+        </div>
+      </form>
+    </Modal>
   );
 }

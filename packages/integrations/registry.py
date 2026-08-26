@@ -1,15 +1,20 @@
 from apps.api.config import get_settings
 from packages.integrations.embedding.base import EmbeddingProvider
 from packages.integrations.embedding.openai_provider import OpenAIEmbeddingProvider
+from packages.integrations.image_gen.base import ImageProvider
+from packages.integrations.image_gen.fal_provider import FalImageProvider
 from packages.integrations.llm.base import LLMProvider
 from packages.integrations.llm.openai_provider import OpenAIProvider
 from packages.integrations.llm.openrouter_provider import OpenRouterProvider
 from packages.integrations.search.base import SearchProvider
 from packages.integrations.search.tavily import TavilyProvider
-from packages.integrations.social.base import SocialOAuthProvider
+from packages.integrations.social.base import SocialOAuthProvider, SocialPublisher
 from packages.integrations.social.linkedin_provider import LinkedInProvider
+from packages.integrations.social.x_provider import XProvider
 from packages.integrations.storage.base import StorageProvider
 from packages.integrations.storage.supabase_provider import SupabaseStorageProvider
+from packages.integrations.video_gen.base import VideoProvider
+from packages.integrations.video_gen.runway_provider import RunwayProvider
 
 _SEARCH_PROVIDERS = {
     "tavily": lambda settings: TavilyProvider(api_key=settings.tavily_api_key or ""),
@@ -31,6 +36,26 @@ _SOCIAL_OAUTH_PROVIDERS = {
         client_id=settings.linkedin_client_id or "",
         client_secret=settings.linkedin_client_secret or "",
     ),
+    "x": lambda settings: XProvider(
+        client_id=settings.x_client_id or "",
+        client_secret=settings.x_client_secret or "",
+    ),
+}
+
+# Every publisher is currently the same adapter instance that also
+# implements SocialOAuthProvider for its platform (one class, two
+# interfaces) — kept as a separate registry/lookup function anyway so
+# callers (the #31 publish queue) depend only on SocialPublisher, not on
+# the OAuth-connection interface.
+_SOCIAL_PUBLISHERS = {
+    "linkedin": lambda settings: LinkedInProvider(
+        client_id=settings.linkedin_client_id or "",
+        client_secret=settings.linkedin_client_secret or "",
+    ),
+    "x": lambda settings: XProvider(
+        client_id=settings.x_client_id or "",
+        client_secret=settings.x_client_secret or "",
+    ),
 }
 
 _STORAGE_PROVIDERS = {
@@ -39,6 +64,14 @@ _STORAGE_PROVIDERS = {
         service_key=settings.supabase_service_key or "",
         bucket=settings.supabase_storage_bucket,
     ),
+}
+
+_IMAGE_PROVIDERS = {
+    "fal": lambda settings: FalImageProvider(api_key=settings.fal_api_key or ""),
+}
+
+_VIDEO_PROVIDERS = {
+    "runway": lambda settings: RunwayProvider(api_key=settings.runway_api_key or ""),
 }
 
 
@@ -94,6 +127,21 @@ def get_social_oauth_provider(platform: str) -> SocialOAuthProvider:
     return factory(settings)
 
 
+def get_social_publisher(platform: str) -> SocialPublisher:
+    # Same one-per-platform shape as get_social_oauth_provider above, and
+    # for the same reason: a brand publishes to every platform it's
+    # connected, not just one selected via settings.
+    settings = get_settings()
+    try:
+        factory = _SOCIAL_PUBLISHERS[platform]
+    except KeyError:
+        raise ValueError(
+            f"Unknown social platform '{platform}'. "
+            f"Valid options: {sorted(_SOCIAL_PUBLISHERS)}"
+        ) from None
+    return factory(settings)
+
+
 def get_storage_provider() -> StorageProvider:
     settings = get_settings()
     try:
@@ -102,5 +150,29 @@ def get_storage_provider() -> StorageProvider:
         raise ValueError(
             f"Unknown STORAGE_PROVIDER '{settings.storage_provider}'. "
             f"Valid options: {sorted(_STORAGE_PROVIDERS)}"
+        ) from None
+    return factory(settings)
+
+
+def get_image_provider() -> ImageProvider:
+    settings = get_settings()
+    try:
+        factory = _IMAGE_PROVIDERS[settings.image_provider]
+    except KeyError:
+        raise ValueError(
+            f"Unknown IMAGE_PROVIDER '{settings.image_provider}'. "
+            f"Valid options: {sorted(_IMAGE_PROVIDERS)}"
+        ) from None
+    return factory(settings)
+
+
+def get_video_provider() -> VideoProvider:
+    settings = get_settings()
+    try:
+        factory = _VIDEO_PROVIDERS[settings.video_provider]
+    except KeyError:
+        raise ValueError(
+            f"Unknown VIDEO_PROVIDER '{settings.video_provider}'. "
+            f"Valid options: {sorted(_VIDEO_PROVIDERS)}"
         ) from None
     return factory(settings)

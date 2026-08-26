@@ -46,7 +46,7 @@ describe("BrandSwitcher", () => {
 
     renderSwitcher();
 
-    expect(screen.getByText("Loading brands…")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
   it("lists every brand and defaults the selection to the first one", async () => {

@@ -14,7 +14,11 @@ class OpenRouterProvider(LLMProvider):
     BASE_URL = "https://openrouter.ai/api/v1"
 
     def __init__(self, api_key: str, timeout: float = 60.0) -> None:
-        self.client = OpenAI(api_key=api_key, base_url=self.BASE_URL, timeout=timeout)
+        # See OpenAIProvider's __init__ for why an empty key falls back to
+        # a placeholder rather than letting the openai SDK raise here.
+        self.client = OpenAI(
+            api_key=api_key or "unconfigured", base_url=self.BASE_URL, timeout=timeout
+        )
 
     def complete(self, prompt: str, model: str, **kwargs: object) -> LLMResponse:
         with track_integration_call("openrouter", "llm"):

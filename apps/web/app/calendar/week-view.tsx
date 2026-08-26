@@ -1,8 +1,10 @@
 "use client";
 
 import type { CalendarEvent } from "@/lib/api";
+import { cn } from "@/components/ui/cn";
 import { dayKey, getWeekDays, isSameDay } from "./date-utils";
 import { StatusBadge } from "./status-badge";
+import { STATUS_ROW_CLASSES } from "./status";
 
 interface WeekViewProps {
   referenceDate: Date;
@@ -31,7 +33,10 @@ export function WeekView({ referenceDate, events, today, onSelectEvent, onAddEve
   const eventsByDay = groupByDay(events);
 
   return (
-    <div className="calendar-week" data-testid="week-view">
+    <div
+      className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-7"
+      data-testid="week-view"
+    >
       {days.map((day) => {
         const key = dayKey(day);
         const dayEvents = (eventsByDay.get(key) ?? [])
@@ -42,38 +47,54 @@ export function WeekView({ referenceDate, events, today, onSelectEvent, onAddEve
         return (
           <div
             key={key}
-            className={`calendar-week-day${isToday ? " calendar-day-cell-today" : ""}`}
             data-testid={`day-${key}`}
+            className={cn(
+              "flex flex-col rounded-xl border border-slate-200 bg-white shadow-card",
+              isToday && "ring-2 ring-brand-500",
+            )}
           >
-            <div className="calendar-day-header">
-              <span className="calendar-day-number">
+            <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+              <span className={cn("text-sm font-semibold", isToday ? "text-brand-700" : "text-slate-700")}>
                 {day.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
               </span>
               <button
                 type="button"
-                className="calendar-add-event"
                 aria-label={`Add event on ${key}`}
                 onClick={() => onAddEvent(day)}
+                className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
               >
                 +
               </button>
             </div>
-            <ul className="calendar-week-events">
+            <ul className="flex flex-1 flex-col gap-2 p-2">
               {dayEvents.map((event) => (
                 <li key={event.id}>
-                  <button type="button" className="calendar-week-event" onClick={() => onSelectEvent(event)}>
-                    <span className="calendar-event-time">
-                      {new Date(event.target_datetime).toLocaleTimeString(undefined, {
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })}
+                  <button
+                    type="button"
+                    onClick={() => onSelectEvent(event)}
+                    className={cn(
+                      "flex w-full flex-col gap-1 rounded-lg border px-2.5 py-2 text-left transition-colors",
+                      STATUS_ROW_CLASSES[event.status],
+                    )}
+                  >
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-slate-500">
+                        {new Date(event.target_datetime).toLocaleTimeString(undefined, {
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                      <StatusBadge status={event.status} />
                     </span>
-                    <span className="calendar-event-title">{event.title}</span>
-                    <StatusBadge status={event.status} />
+                    <span className="truncate text-sm font-medium text-slate-900">{event.title}</span>
                   </button>
                 </li>
               ))}
-              {dayEvents.length === 0 && <li className="calendar-week-empty">No events</li>}
+              {dayEvents.length === 0 && (
+                <li className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-slate-200 py-6 text-xs text-slate-400">
+                  No events
+                </li>
+              )}
             </ul>
           </div>
         );

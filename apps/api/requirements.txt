@@ -20,9 +20,21 @@ python-multipart==0.0.20
 cryptography==50.0.0
 
 langgraph==1.2.11
+# Postgres checkpoint saver for the pipeline graph (Issue #18) — ships as a
+# separate package from core langgraph. psycopg[binary]/psycopg-pool are its
+# own (psycopg3) driver, used only by the checkpointer's dedicated
+# connection — unrelated to SQLAlchemy's psycopg2-binary driver above.
+# [binary] pulls in a self-contained libpq build so this doesn't depend on
+# a system libpq being present (CI runners / dev machines may not have one).
+langgraph-checkpoint-postgres==3.1.2
+psycopg[binary]==3.3.4
+psycopg-pool==3.3.1
+
+reportlab==5.0.1
 
 openai==1.109.1
 
 pytest==8.3.4
 pytest-cov==6.0.0
 httpx==0.28.1
+pypdf==6.7.0

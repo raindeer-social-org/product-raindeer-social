@@ -170,12 +170,18 @@ def verify_social_account(
     brand_id: uuid.UUID,
     account_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_role(*WRITE_ROLES)),
 ) -> SocialAccount:
     """Calls the platform to check whether the stored token is still
     accepted, and updates `status` to match — this is what makes
     revocation on the platform's side (which isn't pushed to us) show up
-    here."""
+    here.
+
+    Issue #37 RBAC audit: this mutates SocialAccount.status and calls out
+    to the external provider, same as every other write in this router —
+    it was previously gated by get_current_user only (any authenticated
+    role, including viewer), inconsistent with connect/disconnect right
+    next to it. Tightened to WRITE_ROLES."""
     _get_org_brand(db, brand_id, current_user.org_id)
     account = _get_account_or_404(db, brand_id, account_id)
 

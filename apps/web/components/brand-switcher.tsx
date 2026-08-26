@@ -1,6 +1,8 @@
 "use client";
 
 import { useBrand } from "@/lib/brand-context";
+import { Avatar } from "@/components/ui/Avatar";
+import { Skeleton } from "@/components/ui/Skeleton";
 
 /**
  * Lets the signed-in user pick which brand the rest of the app is scoped
@@ -10,35 +12,39 @@ import { useBrand } from "@/lib/brand-context";
  * own brand-picking UI.
  */
 export function BrandSwitcher() {
-  const { brands, selectedBrandId, setSelectedBrandId, isLoading, error } = useBrand();
+  const { brands, selectedBrand, selectedBrandId, setSelectedBrandId, isLoading, error } = useBrand();
 
   if (isLoading) {
     return (
-      <span className="brand-switcher-status" role="status">
-        Loading brands…
-      </span>
+      <div className="flex items-center gap-2 px-1 py-1" role="status">
+        <Skeleton className="h-8 w-8 rounded-full" />
+        <Skeleton className="h-4 w-24" />
+      </div>
     );
   }
 
   if (error) {
     return (
-      <span className="brand-switcher-status brand-switcher-error" role="alert">
+      <p className="px-1 text-xs font-medium text-red-600" role="alert">
         {error}
-      </span>
+      </p>
     );
   }
 
   if (brands.length === 0) {
-    return <span className="brand-switcher-status">No brands yet</span>;
+    return <p className="px-1 text-xs text-slate-500">No brands yet</p>;
   }
 
   return (
-    <label className="brand-switcher">
-      <span className="brand-switcher-label">Brand</span>
+    <div className="relative">
+      <div className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center">
+        <Avatar name={selectedBrand?.name ?? "?"} src={selectedBrand?.logo_url} size="sm" />
+      </div>
       <select
         aria-label="Select brand"
         value={selectedBrandId ?? ""}
         onChange={(event) => setSelectedBrandId(event.target.value)}
+        className="w-full appearance-none rounded-lg border border-slate-200 bg-slate-50 py-2 pl-10 pr-8 text-sm font-medium text-slate-800 hover:bg-slate-100 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
       >
         {brands.map((brand) => (
           <option key={brand.id} value={brand.id}>
@@ -46,6 +52,11 @@ export function BrandSwitcher() {
           </option>
         ))}
       </select>
-    </label>
+      <div className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-slate-400">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </div>
+    </div>
   );
 }

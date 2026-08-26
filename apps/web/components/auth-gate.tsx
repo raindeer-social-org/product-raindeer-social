@@ -34,7 +34,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (isLoading) {
     return (
-      <div className="auth-gate-status" role="status">
+      <div className="flex min-h-screen items-center justify-center text-sm text-slate-500" role="status">
         Loading…
       </div>
     );
@@ -46,9 +46,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="app-shell">
+    <div className="flex min-h-screen bg-slate-50">
       <Nav />
-      <main className="app-main">{children}</main>
+      <main className="min-w-0 flex-1 px-6 py-8 lg:px-10">
+        <div className="mx-auto max-w-6xl">{children}</div>
+      </main>
     </div>
   );
 }

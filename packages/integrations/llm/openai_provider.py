@@ -9,7 +9,13 @@ class OpenAIProvider(LLMProvider):
     for OpenAI-only features OpenRouter doesn't cover well."""
 
     def __init__(self, api_key: str, timeout: float = 60.0) -> None:
-        self.client = OpenAI(api_key=api_key, timeout=timeout)
+        # The openai SDK's client raises at construction time if api_key is
+        # empty and no OPENAI_API_KEY env var is set — this codebase's
+        # registry resolves a provider whether or not it's configured
+        # (see packages/integrations/registry.py) and only expects a
+        # failure once a real call is attempted, so an empty key falls
+        # back to an obviously-fake placeholder rather than erroring here.
+        self.client = OpenAI(api_key=api_key or "unconfigured", timeout=timeout)
 
     def complete(self, prompt: str, model: str, **kwargs: object) -> LLMResponse:
         with track_integration_call("openai", "llm"):

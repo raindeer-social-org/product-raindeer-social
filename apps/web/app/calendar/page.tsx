@@ -12,6 +12,10 @@ import {
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { useBrand } from "@/lib/brand-context";
+import { Button } from "@/components/ui/Button";
+import { cn } from "@/components/ui/cn";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { addDays, addMonths, formatMonthLabel, formatWeekRangeLabel } from "./date-utils";
 import { EventForm } from "./event-form";
 import { MonthView } from "./month-view";
@@ -126,56 +130,82 @@ export default function CalendarPage() {
   const today = new Date();
 
   return (
-    <section className="calendar-page">
-      <div className="calendar-toolbar">
-        <div className="calendar-toolbar-left">
-          <h1>Calendar</h1>
-          <p className="scoped-brand">
-            Showing data for: <strong>{selectedBrand ? selectedBrand.name : "no brand selected"}</strong>
-          </p>
-        </div>
+    <div>
+      <PageHeader
+        title="Calendar"
+        description={
+          <>
+            Showing data for: <strong className="font-semibold text-slate-700">{selectedBrand ? selectedBrand.name : "no brand selected"}</strong>
+          </>
+        }
+        action={
+          selectedBrand ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <div
+                className="inline-flex items-center rounded-lg border border-slate-200 bg-white p-0.5"
+                role="group"
+                aria-label="Calendar view"
+              >
+                <button
+                  type="button"
+                  aria-pressed={view === "month"}
+                  onClick={() => setView("month")}
+                  className={cn(
+                    "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                    view === "month" ? "bg-brand-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100",
+                  )}
+                >
+                  Month
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={view === "week"}
+                  onClick={() => setView("week")}
+                  className={cn(
+                    "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                    view === "week" ? "bg-brand-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100",
+                  )}
+                >
+                  Week
+                </button>
+              </div>
+              <Button onClick={() => openCreateForm(referenceDate)}>+ New event</Button>
+            </div>
+          ) : null
+        }
+      />
 
-        {selectedBrand && (
-          <div className="calendar-toolbar-right">
-            <div className="calendar-view-toggle" role="group" aria-label="Calendar view">
-              <button type="button" aria-pressed={view === "month"} onClick={() => setView("month")}>
-                Month
-              </button>
-              <button type="button" aria-pressed={view === "week"} onClick={() => setView("week")}>
-                Week
-              </button>
-            </div>
-            <div className="calendar-nav">
-              <button type="button" onClick={goPrevious} aria-label="Previous period">
-                &larr;
-              </button>
-              <button type="button" onClick={goToday}>
-                Today
-              </button>
-              <button type="button" onClick={goNext} aria-label="Next period">
-                &rarr;
-              </button>
-            </div>
-            <span className="calendar-period-label">
-              {view === "month" ? formatMonthLabel(referenceDate) : formatWeekRangeLabel(referenceDate)}
-            </span>
-            <button type="button" className="calendar-new-event" onClick={() => openCreateForm(referenceDate)}>
-              + New event
-            </button>
+      {selectedBrand && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-1.5">
+            <Button variant="outline" size="sm" aria-label="Previous period" onClick={goPrevious}>
+              &larr;
+            </Button>
+            <Button variant="outline" size="sm" onClick={goToday}>
+              Today
+            </Button>
+            <Button variant="outline" size="sm" aria-label="Next period" onClick={goNext}>
+              &rarr;
+            </Button>
           </div>
-        )}
-      </div>
+          <span className="text-sm font-medium text-slate-600">
+            {view === "month" ? formatMonthLabel(referenceDate) : formatWeekRangeLabel(referenceDate)}
+          </span>
+        </div>
+      )}
 
       {error && (
-        <p className="calendar-error" role="alert">
+        <p role="alert" className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
           {error}
         </p>
       )}
 
       {!selectedBrand ? (
-        <p>Select a brand to see its calendar.</p>
+        <EmptyState title="Select a brand to see its calendar." />
       ) : isLoading && events.length === 0 ? (
-        <p role="status">Loading events…</p>
+        <p role="status" className="py-10 text-center text-sm text-slate-500">
+          Loading events…
+        </p>
       ) : view === "month" ? (
         <MonthView
           referenceDate={referenceDate}
@@ -204,6 +234,6 @@ export default function CalendarPage() {
           onDelete={handleDelete}
         />
       )}
-    </section>
+    </div>
   );
 }
