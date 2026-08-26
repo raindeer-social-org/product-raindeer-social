@@ -129,7 +129,8 @@ export default function ReviewQueuePage() {
         title="Review Queue"
         description={
           <>
-            Showing data for: <strong className="font-medium text-slate-700">{selectedBrand ? selectedBrand.name : "no brand selected"}</strong>
+            Reviewed by <strong className="font-medium text-slate-700">Neer</strong>, your review agent —
+            showing data for: <strong className="font-medium text-slate-700">{selectedBrand ? selectedBrand.name : "no brand selected"}</strong>
           </>
         }
       />

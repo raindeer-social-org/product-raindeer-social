@@ -4,11 +4,27 @@ AI-native social media management: brand intelligence, an agent pipeline that
 turns a calendar slot into a reviewed draft, and human-in-the-loop scheduling
 and publishing — built as a modular monolith, not a pile of microservices.
 
-hello i am here
-
 For the full system design, data model, agent pipeline, and issue roadmap,
 see [`raindeer-social-blueprint.md`](./raindeer-social-blueprint.md). This
 README covers what's here and how to get running; the blueprint covers why.
+
+## Meet the agents
+
+The pipeline is five named agents, each a distinct stage a brand's content
+moves through. The names are product/UI branding — the underlying code keeps
+plain, descriptive module names (linked below) rather than the persona names.
+
+| Agent | Role | Code |
+|-------|------|------|
+| **Aarav** — Onboarding | Scrapes the brand's website, asks clarifying questions, captures logo/theme, and produces the brand report every other agent works from. | [`packages/agents/onboarding/`](./packages/agents/onboarding/) |
+| **Ved** — Research | Researches what's working right now in the brand's niche (e.g. what's going viral in food delivery), on demand or on a schedule. | [`packages/agents/pipeline/nodes/research_engine.py`](./packages/agents/pipeline/nodes/research_engine.py) |
+| **Keshav** — Creative | Turns Ved's research into a concrete creative brief — format, angle, hook, CTA. | [`packages/agents/pipeline/nodes/creative_engine.py`](./packages/agents/pipeline/nodes/creative_engine.py) |
+| **Kavi** — Generative | Writes the post copy and generates the accompanying image(s) from Keshav's brief. | [`packages/agents/pipeline/nodes/generation_engine.py`](./packages/agents/pipeline/nodes/generation_engine.py) |
+| **Neer** — Reviewer | Reviews each draft for brand hygiene, logo placement, and platform fit before it reaches a human. | [`packages/agents/pipeline/nodes/reviewer_engine.py`](./packages/agents/pipeline/nodes/reviewer_engine.py) |
+
+See the open issues for in-flight work on this pipeline (autonomous
+scheduling for Ved, batch generation and engagement prediction, and
+Instagram/Threads/Facebook alongside the existing LinkedIn/X support).
 
 ## System overview
 
@@ -17,7 +33,7 @@ Four backend domains, one repo:
 | Path                | Responsibility |
 |----------------------|----------------|
 | `apps/api`           | FastAPI monolith — routers per domain (`/brands`, `/calendar`, `/posts`, `/agents`, `/publishing`, `/analytics`) |
-| `packages/agents`     | LangGraph agent graphs (research, creative, generation, reviewer, onboarding) |
+| `packages/agents`     | LangGraph agent graphs — Aarav, Ved, Keshav, Kavi, Neer (see **Meet the agents** above) |
 | `apps/web`            | Next.js frontend |
 | `packages/schemas`    | Pydantic + Zod schemas, generated from one OpenAPI source of truth |
 | `migrations`          | Alembic migrations for the Postgres schema |
