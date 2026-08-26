@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { createContext, useCallback, useContext, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "./cn";
 
@@ -19,6 +19,15 @@ let nextId = 1;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  // The portal must not render during SSR or the first client render (both
+  // have no `document.body` node to portal into yet, and must produce
+  // identical output for hydration to succeed) — only after mount, once
+  // this effect flips `mounted` to true, does the portal actually attach.
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const push = useCallback((message: string, tone: Toast["tone"] = "info") => {
     const id = nextId++;
@@ -31,7 +40,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ push }}>
       {children}
-      {typeof document !== "undefined"
+      {mounted
         ? createPortal(
             <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2">
               {toasts.map((toast) => (
