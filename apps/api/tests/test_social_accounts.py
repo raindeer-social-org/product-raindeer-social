@@ -226,6 +226,141 @@ def test_disconnect_wipes_tokens_and_marks_revoked(db_session) -> None:
     assert account.refresh_token_encrypted is None
 
 
+@pytest.mark.parametrize(
+    ("platform", "env_var", "authorize_host"),
+    [
+        ("instagram", "INSTAGRAM_REDIRECT_URI", "https://www.facebook.com"),
+        ("threads", "THREADS_REDIRECT_URI", "https://threads.net"),
+        ("facebook", "FACEBOOK_REDIRECT_URI", "https://www.facebook.com"),
+    ],
+)
+@uses_test_session
+def test_meta_platform_connect_returns_authorize_url_with_signed_state(
+    db_session, monkeypatch, platform, env_var, authorize_host
+) -> None:
+    # Issues #108/#109/#110: Instagram/Threads/Facebook are wired the same
+    # way test_connect_returns_authorize_url_with_signed_state above proves
+    # LinkedIn is — one parametrized test rather than three near-identical
+    # copies.
+    from apps.api.config import get_settings
+
+    monkeypatch.setenv(env_var, f"http://localhost:8000/oauth/{platform}/callback")
+    get_settings.cache_clear()
+    brand, user = _setup_brand(db_session, suffix=f"-{platform}")
+
+    response = client.post(
+        f"/brands/{brand.id}/social-accounts/{platform}/connect", headers=_auth_headers(user)
+    )
+    get_settings.cache_clear()
+
+    assert response.status_code == 200
+    url = response.json()["authorize_url"]
+    assert url.startswith(authorize_host)
+    assert "state=" in url
+
+
+@pytest.mark.parametrize(
+    ("platform", "env_var"),
+    [
+        ("instagram", "INSTAGRAM_REDIRECT_URI"),
+        ("threads", "THREADS_REDIRECT_URI"),
+        ("facebook", "FACEBOOK_REDIRECT_URI"),
+    ],
+)
+@uses_test_session
+def test_meta_platform_connect_503_when_not_configured(
+    db_session, monkeypatch, platform, env_var
+) -> None:
+    from apps.api.config import get_settings
+
+    monkeypatch.delenv(env_var, raising=False)
+    get_settings.cache_clear()
+    brand, user = _setup_brand(db_session, suffix=f"-{platform}")
+
+    response = client.post(
+        f"/brands/{brand.id}/social-accounts/{platform}/connect", headers=_auth_headers(user)
+    )
+    get_settings.cache_clear()
+
+    assert response.status_code == 503
+
+
+@pytest.mark.parametrize(
+    "platform",
+    ["instagram", "threads", "facebook"],
+)
+@uses_test_session
+def test_meta_platform_viewer_cannot_connect(db_session, platform) -> None:
+    brand, viewer = _setup_brand(db_session, UserRole.VIEWER, suffix=f"-{platform}")
+
+    response = client.post(
+        f"/brands/{brand.id}/social-accounts/{platform}/connect", headers=_auth_headers(viewer)
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "platform",
+    ["instagram", "threads", "facebook"],
+)
+@uses_test_session
+def test_meta_platform_callback_rejects_invalid_state(db_session, platform) -> None:
+    response = client.get(
+        f"/oauth/{platform}/callback", params={"code": "abc", "state": "not-a-valid-jwt"}
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("platform", "social_platform"),
+    [
+        ("instagram", SocialPlatform.INSTAGRAM),
+        ("threads", SocialPlatform.THREADS),
+        ("facebook", SocialPlatform.FACEBOOK),
+    ],
+)
+@uses_test_session
+def test_meta_platform_callback_stores_tokens_encrypted_not_plaintext(
+    db_session, platform, social_platform
+) -> None:
+    from apps.api.routers.social_accounts import _create_state
+
+    brand, _user = _setup_brand(db_session, suffix=f"-{platform}")
+    state = _create_state(brand.id)
+
+    fake_tokens = SocialTokens(
+        access_token="super-secret-access-token",
+        refresh_token=None,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=60),
+        scopes=["basic"],
+        external_account_id=f"{platform}-account-123",
+    )
+
+    with patch(
+        "apps.api.routers.social_accounts.get_social_oauth_provider"
+    ) as mock_get_provider:
+        mock_get_provider.return_value.exchange_code.return_value = fake_tokens
+        response = client.get(
+            f"/oauth/{platform}/callback", params={"code": "auth-code", "state": state}
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["external_account_id"] == f"{platform}-account-123"
+    assert body["status"] == "active"
+    assert "access_token" not in body
+
+    account = (
+        db_session.query(SocialAccount)
+        .filter(SocialAccount.brand_id == brand.id, SocialAccount.platform == social_platform)
+        .one()
+    )
+    assert account.access_token_encrypted != "super-secret-access-token"
+    assert "super-secret-access-token" not in account.access_token_encrypted
+
+
 @uses_test_session
 def test_cross_org_social_account_access_returns_404(db_session) -> None:
     brand, _owner = _setup_brand(db_session, UserRole.EDITOR, suffix="-1")

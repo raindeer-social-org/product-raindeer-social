@@ -355,7 +355,24 @@ def test_generation_node_appends_to_completed_stages(db_session) -> None:
 def test_pipeline_logs_agent_run_with_agent_type_generation_including_token_and_cost(
     db_session, thread_cleanup
 ) -> None:
-    post = _setup_post(db_session)
+    from datetime import datetime, timezone
+
+    # Issues #108/#109/#110 grew SUPPORTED_PLATFORMS beyond ("linkedin",
+    # "x") — pin target_platforms explicitly via a calendar event so
+    # Research/Creative Engine's "no calendar event" -> "all
+    # SUPPORTED_PLATFORMS" fallback doesn't pull in platforms this test's
+    # LLM mocks don't cover.
+    brand = _setup_brand(db_session)
+    event = ContentCalendarEvent(
+        brand_id=brand.id,
+        title="Test event",
+        target_platforms=["linkedin", "x"],
+        desired_format="text_post",
+        target_datetime=datetime(2026, 9, 1, tzinfo=timezone.utc),
+    )
+    db_session.add(event)
+    db_session.flush()
+    post = _setup_post(db_session, brand=brand, calendar_event=event)
     thread_cleanup.append(str(post.id))
 
     with (

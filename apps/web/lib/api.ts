@@ -358,10 +358,8 @@ export async function rescheduleReviewPost(
 
 // --- Social accounts (Issue #91) ---
 
-// Mirrors apps/api/models/social_account.py::SocialPlatform. "linkedin" is
-// the only value today, but this is kept as a string union (not a literal)
-// so the UI layer can stay written generically as more providers land.
-export type SocialPlatform = "linkedin";
+// Mirrors apps/api/models/social_account.py::SocialPlatform.
+export type SocialPlatform = "linkedin" | "instagram" | "threads" | "facebook";
 
 // Mirrors apps/api/models/social_account.py::SocialAccountStatus.
 export type SocialAccountStatus = "active" | "expired" | "revoked";
@@ -411,6 +409,50 @@ export async function fetchSocialAccounts(token: string, brandId: string): Promi
 // the browser does with it.
 export async function connectLinkedIn(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
   const res = await fetch(socialAccountsUrl(brandId, "/linkedin/connect"), {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+// Starts the Instagram/Threads/Facebook OAuth flows — same shape as
+// connectLinkedIn above (see apps/api/routers/social_accounts.py's
+// connect_instagram/connect_threads/connect_facebook, which are all thin
+// wrappers around the same _connect_platform helper connect_linkedin's
+// logic was generalized into).
+export async function connectInstagram(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  const res = await fetch(socialAccountsUrl(brandId, "/instagram/connect"), {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function connectThreads(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  const res = await fetch(socialAccountsUrl(brandId, "/threads/connect"), {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function connectFacebook(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  const res = await fetch(socialAccountsUrl(brandId, "/facebook/connect"), {
     method: "POST",
     headers: authHeaders(token),
   });

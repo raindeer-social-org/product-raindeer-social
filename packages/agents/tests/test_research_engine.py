@@ -32,6 +32,7 @@ from apps.api.models import (
     Organization,
     Post,
 )
+from apps.api.models.content_calendar_event import SUPPORTED_PLATFORMS
 from packages.agents.onboarding.embedding import embed_brand_report
 from packages.agents.pipeline.checkpointer import get_postgres_checkpointer
 from packages.agents.pipeline.graph import run_pipeline
@@ -171,7 +172,11 @@ def test_research_brief_includes_timing_trend_signal(db_session) -> None:
     assert "timing_signal" in brief
     signal = brief["timing_signal"]
     assert set(signal.keys()) == {"researched_at", "platforms", "trending_topics", "target_datetime"}
-    assert signal["platforms"] == ["linkedin", "x"]  # SUPPORTED_PLATFORMS fallback
+    # No calendar event on this post, so timing_signal falls back to every
+    # SUPPORTED_PLATFORMS entry — asserted against that tuple directly
+    # (rather than a hardcoded list) so this test doesn't need updating
+    # every time a new platform's publishing adapter lands.
+    assert signal["platforms"] == list(SUPPORTED_PLATFORMS)
     assert "Trending: sustainable camping gear" in signal["trending_topics"]
     assert signal["target_datetime"] is None
     # researched_at is a real, parseable ISO-8601 timestamp, not a placeholder.
