@@ -338,3 +338,141 @@ export async function rescheduleReviewPost(
 
   return res.json();
 }
+
+// --- Analytics (Issue #92) ---
+
+// Mirrors apps/api/schemas/analytics.py::PlatformAggregate. total_*/
+// average_* are real SQL SUM()/AVG() computed server-side, not
+// accumulated client-side.
+export interface PlatformAggregate {
+  platform: string;
+  snapshot_count: number;
+  total_likes: number;
+  total_comments: number;
+  total_shares: number;
+  total_impressions: number;
+  average_likes: number;
+  average_comments: number;
+  average_shares: number;
+  average_impressions: number;
+}
+
+// Mirrors apps/api/schemas/analytics.py::BrandAnalyticsSummary.
+export interface BrandAnalyticsSummary {
+  brand_id: string;
+  start_date: string;
+  end_date: string;
+  post_count: number;
+  platforms: PlatformAggregate[];
+  overall: PlatformAggregate;
+}
+
+// Mirrors apps/api/schemas/analytics.py::PostAnalyticsAggregate.
+export interface PostAnalyticsAggregate {
+  post_id: string;
+  start_date: string;
+  end_date: string;
+  platforms: PlatformAggregate[];
+  overall: PlatformAggregate;
+}
+
+// Mirrors apps/api/schemas/analytics.py::EngagementSnapshotPoint.
+export interface EngagementSnapshotPoint {
+  platform: string;
+  likes: number;
+  comments: number;
+  shares: number;
+  impressions: number;
+  polled_at: string;
+}
+
+// Mirrors apps/api/schemas/analytics.py::PostAnalyticsTrend — the raw,
+// unaggregated time series for one post, ordered by polled_at ascending.
+export interface PostAnalyticsTrend {
+  post_id: string;
+  start_date: string;
+  end_date: string;
+  points: EngagementSnapshotPoint[];
+}
+
+// start_date/end_date are optional ISO datetimes on every analytics
+// endpoint — apps/api/routers/analytics.py::_resolve_date_range defaults
+// to the last DEFAULT_WINDOW_DAYS (30) days when either is omitted.
+export interface AnalyticsDateRangeInput {
+  startDate?: string;
+  endDate?: string;
+}
+
+// apps/api/routers/analytics.py mounts these under
+// /brands/{brand_id}/analytics, so every call is scoped to a brand — same
+// convention as calendarEventsUrl/reviewQueueUrl above.
+function analyticsUrl(brandId: string, suffix = ""): string {
+  return `${API_URL}/brands/${brandId}/analytics${suffix}`;
+}
+
+function dateRangeSearchParams(range: AnalyticsDateRangeInput): URLSearchParams {
+  const params = new URLSearchParams();
+  if (range.startDate) params.set("start_date", range.startDate);
+  if (range.endDate) params.set("end_date", range.endDate);
+  return params;
+}
+
+export async function fetchAnalyticsSummary(
+  token: string,
+  brandId: string,
+  range: AnalyticsDateRangeInput = {}
+): Promise<BrandAnalyticsSummary> {
+  const query = dateRangeSearchParams(range).toString();
+  const res = await fetch(analyticsUrl(brandId, `/summary${query ? `?${query}` : ""}`), {
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function fetchPostAnalyticsAggregate(
+  token: string,
+  brandId: string,
+  postId: string,
+  range: AnalyticsDateRangeInput = {}
+): Promise<PostAnalyticsAggregate> {
+  const query = dateRangeSearchParams(range).toString();
+  const res = await fetch(analyticsUrl(brandId, `/posts/${postId}${query ? `?${query}` : ""}`), {
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export interface PostAnalyticsTrendInput extends AnalyticsDateRangeInput {
+  platform?: string;
+}
+
+export async function fetchPostAnalyticsTrend(
+  token: string,
+  brandId: string,
+  postId: string,
+  range: PostAnalyticsTrendInput = {}
+): Promise<PostAnalyticsTrend> {
+  const params = dateRangeSearchParams(range);
+  if (range.platform) params.set("platform", range.platform);
+  const query = params.toString();
+
+  const res = await fetch(analyticsUrl(brandId, `/posts/${postId}/trend${query ? `?${query}` : ""}`), {
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
