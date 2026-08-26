@@ -104,6 +104,13 @@ describe("OnboardingPage", () => {
 
     renderPage();
 
+    // Wait for the actual data-fetch chain (AuthProvider's localStorage
+    // read -> BrandProvider's fetchBrands -> this page's own
+    // fetchOnboarding) to fully settle before asserting on rendered text —
+    // a bare findByText can resolve on a still-loading intermediate render
+    // that gets replaced a tick later, occasionally racing the very next
+    // synchronous assertion.
+    await waitFor(() => expect(fetchOnboardingMock).toHaveBeenCalled());
     expect(await screen.findByText("Start onboarding")).toBeInTheDocument();
 
     await user.type(screen.getByLabelText("Brand voice"), "Friendly and confident");
