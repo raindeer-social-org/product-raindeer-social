@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect } from "react";
+import { useEffect, useId } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "./cn";
 
@@ -20,6 +20,8 @@ export function Modal({
   footer?: ReactNode;
   size?: "sm" | "md" | "lg";
 }) {
+  const titleId = useId();
+
   useEffect(() => {
     if (!open) return;
     function onKeyDown(event: KeyboardEvent) {
@@ -43,6 +45,7 @@ export function Modal({
       <div
         role="dialog"
         aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
         className={cn(
           "relative w-full animate-slide-up rounded-xl bg-white shadow-popover",
           sizeClass,
@@ -50,7 +53,9 @@ export function Modal({
       >
         {title ? (
           <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-            <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+            <h2 id={titleId} className="text-base font-semibold text-slate-900">
+              {title}
+            </h2>
             <button
               type="button"
               onClick={onClose}

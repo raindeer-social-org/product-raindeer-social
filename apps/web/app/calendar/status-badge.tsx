@@ -1,8 +1,9 @@
 "use client";
 
 import type { CalendarEventStatus } from "@/lib/api";
-import { STATUS_CLASS, STATUS_LABELS } from "./status";
+import { Badge } from "@/components/ui/Badge";
+import { STATUS_BADGE_TONE, STATUS_LABELS } from "./status";
 
 export function StatusBadge({ status }: { status: CalendarEventStatus }) {
-  return <span className={`status-badge ${STATUS_CLASS[status]}`}>{STATUS_LABELS[status]}</span>;
+  return <Badge tone={STATUS_BADGE_TONE[status]}>{STATUS_LABELS[status]}</Badge>;
 }
