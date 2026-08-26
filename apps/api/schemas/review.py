@@ -21,6 +21,10 @@ class ReviewFeedbackRead(BaseModel):
     score: float
     verdict: ReviewVerdict
     comments: dict
+    # Issue #107 — only populated for source=ai_reviewer rows; a
+    # source=human row (approve/reject) never predicts engagement.
+    predicted_engagement_score: float | None = None
+    predicted_engagement_reasoning: str | None = None
     created_at: datetime
 
 
