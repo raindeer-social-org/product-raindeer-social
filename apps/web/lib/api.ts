@@ -520,3 +520,127 @@ export async function removeBrandLogo(token: string, brandId: string): Promise<B
 
   return res.json();
 }
+
+// --- Onboarding + Brand Report (Issue #90) ---
+
+// Mirrors apps/api/schemas/onboarding.py::OnboardingUpsert.
+export interface OnboardingUpsertInput {
+  voice?: string | null;
+  audience?: string | null;
+  product_catalog?: Record<string, unknown> | null;
+  competitors?: string[] | null;
+  goals?: string[] | null;
+}
+
+// Mirrors apps/api/schemas/onboarding.py::OnboardingRead.
+export interface OnboardingResponseData {
+  id: string;
+  brand_id: string;
+  voice: string | null;
+  audience: string | null;
+  product_catalog: Record<string, unknown> | null;
+  competitors: string[] | null;
+  goals: string[] | null;
+  is_complete: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// Mirrors apps/api/schemas/brand.py::BrandReportExport.
+export interface BrandReportExportResult {
+  url: string;
+  generated_at: string;
+}
+
+// apps/api/routers/onboarding.py mounts these under
+// /brands/{brand_id}/onboarding, so every call is scoped to a brand — same
+// convention as calendarEventsUrl/reviewQueueUrl above.
+function onboardingUrl(brandId: string, suffix = ""): string {
+  return `${API_URL}/brands/${brandId}/onboarding${suffix}`;
+}
+
+// Returns null (rather than throwing) when onboarding hasn't been started
+// yet — apps/api/routers/onboarding.py::get_onboarding 404s in that case,
+// which the onboarding page treats as its "not started" state, not an error.
+export async function fetchOnboarding(
+  token: string,
+  brandId: string
+): Promise<OnboardingResponseData | null> {
+  const res = await fetch(onboardingUrl(brandId), {
+    headers: authHeaders(token),
+  });
+
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function upsertOnboarding(
+  token: string,
+  brandId: string,
+  payload: OnboardingUpsertInput
+): Promise<OnboardingResponseData> {
+  const res = await fetch(onboardingUrl(brandId), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function completeOnboarding(
+  token: string,
+  brandId: string
+): Promise<OnboardingResponseData> {
+  const res = await fetch(onboardingUrl(brandId, "/complete"), {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+// Triggers the onboarding research + synthesis agent chain (a real LLM call
+// chain — can take tens of seconds) and returns the Brand with brand_report
+// populated. apps/api/routers/onboarding.py::run_agent requires onboarding
+// to already be complete.
+export async function runOnboardingAgent(token: string, brandId: string): Promise<Brand> {
+  const res = await fetch(onboardingUrl(brandId, "/run-agent"), {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function exportBrandReport(
+  token: string,
+  brandId: string
+): Promise<BrandReportExportResult> {
+  const res = await fetch(`${API_URL}/brands/${brandId}/report/export`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
