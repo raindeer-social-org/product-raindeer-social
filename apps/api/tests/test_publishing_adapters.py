@@ -373,16 +373,29 @@ def test_x_exchange_code_returns_tokens_and_fetches_user_id(db_session) -> None:
     )
     userinfo_response = _mock_response({"data": {"id": "x-user-42"}})
 
-    with patch("httpx.post", return_value=token_response), patch(
+    with patch("httpx.post", return_value=token_response) as mock_post, patch(
         "httpx.get", return_value=userinfo_response
     ):
-        tokens = provider.exchange_code(code="auth-code", redirect_uri="https://app.test/callback")
+        tokens = provider.exchange_code(
+            code="auth-code", redirect_uri="https://app.test/callback", code_verifier="signed-state"
+        )
 
     assert tokens.access_token == "at-123"
     assert tokens.refresh_token == "rt-123"
     assert tokens.external_account_id == "x-user-42"
     assert tokens.expires_at is not None
     assert tokens.scopes == ["tweet.read", "tweet.write"]
+    # Regression test: code_verifier sent to X must be exactly the value the
+    # caller passed (the original `state`, per authorize_url's
+    # code_challenge) — not redirect_uri or anything else.
+    assert mock_post.call_args.kwargs["data"]["code_verifier"] == "signed-state"
+
+
+def test_x_exchange_code_requires_code_verifier() -> None:
+    provider = XProvider(client_id="cid", client_secret="secret")
+
+    with pytest.raises(ValueError, match="code_verifier"):
+        provider.exchange_code(code="auth-code", redirect_uri="https://app.test/callback")
 
 
 def test_x_is_token_valid_true_on_200() -> None:
