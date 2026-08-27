@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ApiError,
   connectLinkedIn,
+  connectX,
   disconnectSocialAccount,
   fetchSocialAccounts,
   type AuthorizeUrlResponse,
@@ -28,22 +29,23 @@ import { redirectToAuthorizeUrl } from "./redirect";
 // platform still renders instead of breaking.
 const PLATFORM_LABELS: Partial<Record<SocialPlatform, string>> = {
   linkedin: "LinkedIn",
+  x: "X",
 };
 
 function platformLabel(platform: SocialPlatform): string {
   return PLATFORM_LABELS[platform] ?? platform;
 }
 
-// Platforms the UI can start a connect flow for. LinkedIn is genuinely the
-// only connectable platform today, but this is a list plus a lookup table
-// (not a single hardcoded button/handler) so a second provider is a data
-// change here rather than a rewrite of this page.
-const CONNECTABLE_PLATFORMS: SocialPlatform[] = ["linkedin"];
+// Platforms the UI can start a connect flow for — a list plus a lookup
+// table (not hardcoded per-platform buttons/handlers) so adding one more
+// provider is a data change here rather than a rewrite of this page.
+const CONNECTABLE_PLATFORMS: SocialPlatform[] = ["linkedin", "x"];
 
 const CONNECT_HANDLERS: Partial<
   Record<SocialPlatform, (token: string, brandId: string) => Promise<AuthorizeUrlResponse>>
 > = {
   linkedin: connectLinkedIn,
+  x: connectX,
 };
 
 const STATUS_TONE: Record<SocialAccountStatus, BadgeTone> = {
@@ -123,10 +125,11 @@ export default function SocialAccountsPage() {
       redirectToAuthorizeUrl(authorize_url);
     } catch (err) {
       // The backend 503s with a specific, well-known detail message when
-      // it has no LINKEDIN_REDIRECT_URI configured (see
-      // apps/api/routers/social_accounts.py::connect_linkedin) — that's an
-      // expected, common dev-environment state, not a generic failure, so
-      // it gets its own friendly message instead of an error toast.
+      // that platform's redirect URI isn't configured (see
+      // apps/api/routers/social_accounts.py::connect_linkedin/connect_x) —
+      // that's an expected, common dev-environment state, not a generic
+      // failure, so it gets its own friendly message instead of an error
+      // toast.
       if (err instanceof ApiError && err.status === 503) {
         setNotConfiguredPlatform(platform);
       } else {
