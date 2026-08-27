@@ -25,14 +25,14 @@ export function BrandSwitcher() {
 
   if (error) {
     return (
-      <p className="px-1 text-xs font-medium text-red-600" role="alert">
+      <p className="px-1 text-xs font-medium text-red-400" role="alert">
         {error}
       </p>
     );
   }
 
   if (brands.length === 0) {
-    return <p className="px-1 text-xs text-slate-500">No brands yet</p>;
+    return <p className="px-1 text-xs text-ink-400">No brands yet</p>;
   }
 
   return (
@@ -44,15 +44,15 @@ export function BrandSwitcher() {
         aria-label="Select brand"
         value={selectedBrandId ?? ""}
         onChange={(event) => setSelectedBrandId(event.target.value)}
-        className="w-full appearance-none rounded-lg border border-slate-200 bg-slate-50 py-2 pl-10 pr-8 text-sm font-medium text-slate-800 hover:bg-slate-100 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+        className="w-full appearance-none rounded-lg border border-ink-700 bg-ink-800/60 py-2 pl-10 pr-8 text-sm font-medium text-ink-100 transition-colors hover:bg-ink-800 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/20"
       >
         {brands.map((brand) => (
-          <option key={brand.id} value={brand.id}>
+          <option key={brand.id} value={brand.id} className="bg-ink-900 text-ink-100">
             {brand.name}
           </option>
         ))}
       </select>
-      <div className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-slate-400">
+      <div className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-ink-400">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>

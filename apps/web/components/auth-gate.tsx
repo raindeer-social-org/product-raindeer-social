@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { Nav } from "@/components/nav";
+import { PromptBar } from "@/components/prompt-bar";
 
 // Routes reachable without a token. Everything else is gated.
 const PUBLIC_PATHS = ["/login"];
@@ -51,6 +52,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       <main className="min-w-0 flex-1 px-6 py-8 lg:px-10">
         <div className="mx-auto max-w-6xl">{children}</div>
       </main>
+      <PromptBar />
     </div>
   );
 }

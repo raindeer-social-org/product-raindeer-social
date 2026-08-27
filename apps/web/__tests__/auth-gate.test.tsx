@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { AuthGate } from "@/components/auth-gate";
 import { AuthProvider } from "@/lib/auth-context";
 import { BrandProvider } from "@/lib/brand-context";
+import { ToastProvider } from "@/components/ui/Toast";
 
 const replace = vi.fn();
 let mockPathname = "/calendar";
@@ -18,13 +19,15 @@ vi.mock("@/lib/api", () => ({
 
 function renderGate() {
   return render(
-    <AuthProvider>
-      <BrandProvider>
-        <AuthGate>
-          <div>protected content</div>
-        </AuthGate>
-      </BrandProvider>
-    </AuthProvider>
+    <ToastProvider>
+      <AuthProvider>
+        <BrandProvider>
+          <AuthGate>
+            <div>protected content</div>
+          </AuthGate>
+        </BrandProvider>
+      </AuthProvider>
+    </ToastProvider>
   );
 }
 

@@ -103,21 +103,27 @@ export function Nav() {
   const { logout } = useAuth();
 
   return (
-    <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r border-slate-200 bg-white">
-      <div className="flex h-16 items-center gap-2 border-b border-slate-100 px-5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white">
+    <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r border-ink-800 bg-ink-950 bg-gradient-to-b from-ink-900 via-ink-950 to-ink-950 shadow-chrome">
+      <div className="flex h-16 items-center gap-2.5 border-b border-ink-800 px-5">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-500 text-sm font-bold text-ink-950">
           R
         </div>
-        <Link href="/" className="text-[15px] font-semibold text-slate-900">
+        <Link href="/" className="text-[15px] font-semibold tracking-tight text-ink-100">
           Raindeer Social
         </Link>
       </div>
 
-      <div className="border-b border-slate-100 px-4 py-3">
+      <div className="border-b border-ink-800 px-4 py-3.5">
+        <p className="mb-2 px-0.5 font-mono text-[10px] font-medium uppercase tracking-widest text-ink-500">
+          Brand
+        </p>
         <BrandSwitcher />
       </div>
 
       <nav aria-label="Main navigation" className="flex-1 overflow-y-auto scrollbar-thin px-3 py-4">
+        <p className="mb-2 px-3 font-mono text-[10px] font-medium uppercase tracking-widest text-ink-500">
+          Workspace
+        </p>
         <ul className="space-y-0.5">
           {NAV_LINKS.map((link) => {
             const isActive = link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
@@ -128,14 +134,20 @@ export function Nav() {
                   href={link.href}
                   aria-current={isActive ? "page" : undefined}
                   className={cn(
-                    "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                    "flex items-center gap-3 rounded-lg border-l-2 px-3 py-2 text-sm font-medium transition-colors",
                     isActive
-                      ? "bg-brand-50 text-brand-700"
-                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
+                      ? "border-accent-500 bg-ink-800/70 text-accent-400"
+                      : "border-transparent text-ink-300 hover:border-ink-600 hover:bg-ink-800/50 hover:text-ink-50",
                   )}
                 >
                   <Icon />
-                  {link.label}
+                  <span className="flex-1">{link.label}</span>
+                  {isActive ? (
+                    <span
+                      aria-hidden="true"
+                      className="h-1.5 w-1.5 shrink-0 animate-pulse-dot rounded-full bg-accent-500"
+                    />
+                  ) : null}
                 </Link>
               </li>
             );
@@ -143,11 +155,14 @@ export function Nav() {
         </ul>
       </nav>
 
-      <div className="border-t border-slate-100 p-3">
+      <div className="border-t border-ink-800 p-3">
+        <p className="mb-2 px-3 font-mono text-[10px] font-medium uppercase tracking-widest text-ink-500">
+          Session
+        </p>
         <button
           type="button"
           onClick={logout}
-          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-ink-300 transition-colors hover:bg-ink-800/70 hover:text-ink-50"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path
