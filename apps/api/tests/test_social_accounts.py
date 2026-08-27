@@ -267,8 +267,16 @@ def test_connect_503_when_x_not_configured(db_session, monkeypatch) -> None:
 
 
 @uses_test_session
-def test_x_callback_passes_state_as_pkce_code_verifier(db_session) -> None:
+def test_x_callback_passes_state_as_pkce_code_verifier(db_session, monkeypatch) -> None:
+    from apps.api.config import get_settings
     from apps.api.routers.social_accounts import _create_state
+
+    # Pin this explicitly rather than relying on whatever X_REDIRECT_URI
+    # happens to be in the environment (a real dev .env vs. CI's unset
+    # value) — this test only cares that code_verifier is threaded
+    # through correctly, not what the configured redirect URI is.
+    monkeypatch.setenv("X_REDIRECT_URI", "http://localhost:8000/oauth/x/callback")
+    get_settings.cache_clear()
 
     brand, _user = _setup_brand(db_session)
     state = _create_state(brand.id, "x")
@@ -280,6 +288,7 @@ def test_x_callback_passes_state_as_pkce_code_verifier(db_session) -> None:
     with patch("apps.api.routers.social_accounts.get_social_oauth_provider") as mock_provider:
         mock_provider.return_value.exchange_code.return_value = fake_tokens
         response = client.get("/oauth/x/callback", params={"code": "auth-code", "state": state})
+        get_settings.cache_clear()
 
         # This is the actual regression this issue was filed for: XProvider's
         # PKCE ("plain") requires code_verifier == the code_challenge sent to
