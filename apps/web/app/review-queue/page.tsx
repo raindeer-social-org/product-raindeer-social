@@ -126,16 +126,27 @@ export default function ReviewQueuePage() {
   return (
     <div>
       <PageHeader
-        title="Review Queue"
+        title={
+          <span className="inline-flex items-center gap-2.5">
+            <span
+              aria-hidden="true"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-agent-neer-from to-agent-neer-to text-sm font-extrabold text-white"
+            >
+              N
+            </span>
+            Review Queue &middot; Neer
+          </span>
+        }
         description={
           <>
-            Showing data for: <strong className="font-medium text-slate-700">{selectedBrand ? selectedBrand.name : "no brand selected"}</strong>
+            Neer screens every draft for brand voice, compliance, and platform fit before it reaches you. Showing
+            data for: <strong className="font-medium text-ink-700">{selectedBrand ? selectedBrand.name : "no brand selected"}</strong>
           </>
         }
       />
 
       {error && (
-        <p role="alert" className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+        <p role="alert" className="mb-4 rounded-lg bg-danger-bg px-3 py-2 text-sm font-medium text-danger">
           {error}
         </p>
       )}
