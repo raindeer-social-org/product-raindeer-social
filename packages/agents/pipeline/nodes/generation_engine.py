@@ -183,6 +183,40 @@ def _generate_image_media(post_id: str, platform: str, platform_brief: dict[str,
     return {"status": "generated", "platform": platform, "format": fmt, "url": stored_url}
 
 
+def generate_standalone_images(
+    prompt: str, count: int = 4, *, path_prefix: str = "adhoc"
+) -> list[dict[str, Any]]:
+    """Issue #126 — the Content AI workspace page's image-first fast path.
+    Generates `count` standalone image variants straight from a free-form
+    prompt, reusing the exact same ImageProvider (Issue #22) +
+    StorageProvider (Issue #11) interface calls _generate_image_media uses
+    for the per-post pipeline — just without a Post/creative-brief
+    context, since Content AI skips copywriting entirely. Same
+    interface-only, degrade-on-failure contract as the rest of this
+    module: a failed variant becomes a {"status": "failed"} entry rather
+    than aborting the whole batch, so one bad call doesn't cost the other
+    variants."""
+    results: list[dict[str, Any]] = []
+    for _ in range(count):
+        try:
+            result = get_image_provider().generate(prompt=prompt)
+            content, content_type = _download_image_bytes(result.url)
+            extension = "png" if "png" in content_type else content_type.split("/")[-1] or "png"
+            path = f"generated/{path_prefix}/{uuid.uuid4().hex}.{extension}"
+            stored_url = get_storage_provider().upload(path, content, content_type)
+        except Exception:
+            logger.warning(
+                "Generation Engine: standalone image generation failed; "
+                "degrading gracefully (variant omitted)",
+                exc_info=True,
+            )
+            results.append({"status": "failed", "url": None})
+            continue
+
+        results.append({"status": "generated", "url": stored_url})
+    return results
+
+
 def _is_video_or_carousel_format(fmt: str) -> bool:
     return any(keyword in fmt for keyword in VIDEO_FORMAT_KEYWORDS)
 

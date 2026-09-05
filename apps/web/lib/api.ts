@@ -114,7 +114,12 @@ export interface ReviewFeedback {
   created_at: string;
 }
 
-// Mirrors apps/api/models/post.py::PipelineStage.
+// Mirrors apps/api/models/post.py::PipelineStage. "failed" is set
+// out-of-band by the publish queue (apps/api/services/publish_queue.py)
+// once a publish permanently exhausts its retries — added here alongside
+// Issue #126's Create Post "Recent runs" list (apps/api/schemas/post.py::
+// PostRead), the first place in the web app that surfaces every stage
+// rather than just the ones review-queue/calendar already covered.
 export type PipelineStage =
   | "research"
   | "creative"
@@ -125,7 +130,8 @@ export type PipelineStage =
   | "publisher"
   | "analytics_collector"
   | "completed"
-  | "rejected";
+  | "rejected"
+  | "failed";
 
 // Mirrors apps/api/schemas/review.py::ReviewQueuePostRead.
 export interface ReviewQueuePost {
@@ -841,6 +847,160 @@ export async function fetchPostAnalyticsTrend(
   const query = params.toString();
 
   const res = await fetch(analyticsUrl(brandId, `/posts/${postId}/trend${query ? `?${query}` : ""}`), {
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+// --- Research · Ved (Issue #126) ---
+
+// Mirrors apps/api/schemas/research.py::ResearchRunRead. `brief` is
+// exactly what packages/agents/pipeline/nodes/research_engine.py's
+// _research_brief produces: brand_context, platform_trends,
+// industry_trends, timing_signal.
+export interface ResearchRun {
+  id: string;
+  post_id: string;
+  brand_id: string;
+  created_at: string;
+  brief: {
+    post_id: string;
+    brand_context: Array<Record<string, unknown>>;
+    platform_trends: Record<string, Array<{ title: string; url: string; content: string }>>;
+    industry_trends: Array<{ title: string; url: string; content: string }>;
+    timing_signal: {
+      researched_at: string;
+      platforms: string[];
+      trending_topics: string[];
+      target_datetime: string | null;
+    };
+  };
+}
+
+// apps/api/routers/research.py mounts these under /brands/{brand_id}/research
+// — same brand-scoping convention as calendarEventsUrl/reviewQueueUrl above.
+function researchUrl(brandId: string, suffix = ""): string {
+  return `${API_URL}/brands/${brandId}/research${suffix}`;
+}
+
+export async function runResearch(token: string, brandId: string): Promise<ResearchRun> {
+  const res = await fetch(researchUrl(brandId, "/run"), {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+// Returns null (rather than throwing) when no research has been run yet —
+// apps/api/routers/research.py::latest_research 404s in that case, which
+// the Research page treats as its "nothing yet, run one" state.
+export async function fetchLatestResearch(token: string, brandId: string): Promise<ResearchRun | null> {
+  const res = await fetch(researchUrl(brandId, "/latest"), {
+    headers: authHeaders(token),
+  });
+
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+// --- Creative · Keshav (Issue #126) ---
+
+// Mirrors apps/api/schemas/creative.py::CreativeAngleRead.
+export interface CreativeAngle {
+  format: string;
+  angle: string;
+  hook: string;
+  why: string;
+  cta: string;
+  score: number;
+}
+
+export async function generateCreativeAngles(
+  token: string,
+  brandId: string,
+  brief: string
+): Promise<CreativeAngle[]> {
+  const res = await fetch(`${API_URL}/brands/${brandId}/creative/angles`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ brief }),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  const data: { angles: CreativeAngle[] } = await res.json();
+  return data.angles;
+}
+
+// --- Content AI (Issue #126) ---
+
+// Mirrors apps/api/schemas/content_ai.py::ContentAIVariantRead.
+export interface ContentAIVariant {
+  status: "generated" | "failed";
+  url: string | null;
+}
+
+// Mirrors apps/api/schemas/content_ai.py::ContentAIGenerateRequest.
+export interface ContentAIGenerateInput {
+  prompt: string;
+  aspect_ratio?: string | null;
+  style?: string | null;
+  lock_brand_colors?: boolean;
+  count?: number;
+}
+
+export async function generateContentAIImages(
+  token: string,
+  brandId: string,
+  payload: ContentAIGenerateInput
+): Promise<ContentAIVariant[]> {
+  const res = await fetch(`${API_URL}/brands/${brandId}/content-ai/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  const data: { variants: ContentAIVariant[] } = await res.json();
+  return data.variants;
+}
+
+// --- Posts / recent runs (Issue #126) ---
+
+// Mirrors apps/api/schemas/post.py::PostRead.
+export interface PostSummary {
+  id: string;
+  brand_id: string;
+  calendar_event_id: string | null;
+  current_pipeline_stage: PipelineStage;
+  body_text: Record<string, string> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// apps/api/routers/posts.py mounts this under /brands/{brand_id}/posts —
+// same brand-scoping convention as calendarEventsUrl above.
+export async function fetchRecentPosts(token: string, brandId: string, limit = 20): Promise<PostSummary[]> {
+  const res = await fetch(`${API_URL}/brands/${brandId}/posts?limit=${limit}`, {
     headers: authHeaders(token),
   });
 

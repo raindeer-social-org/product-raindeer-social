@@ -10,7 +10,11 @@ from apps.api.observability import init_sentry
 from apps.api.routers.analytics import router as analytics_router
 from apps.api.routers.brands import router as brands_router
 from apps.api.routers.calendar import router as calendar_router
+from apps.api.routers.content_ai import router as content_ai_router
+from apps.api.routers.creative import router as creative_router
 from apps.api.routers.onboarding import router as onboarding_router
+from apps.api.routers.posts import router as posts_router
+from apps.api.routers.research import router as research_router
 from apps.api.routers.review import router as review_router
 from apps.api.routers.social_accounts import router as social_accounts_router
 
@@ -39,7 +43,11 @@ app.include_router(auth_router)
 app.include_router(analytics_router)
 app.include_router(brands_router)
 app.include_router(calendar_router)
+app.include_router(content_ai_router)
+app.include_router(creative_router)
 app.include_router(onboarding_router)
+app.include_router(posts_router)
+app.include_router(research_router)
 app.include_router(review_router)
 app.include_router(social_accounts_router)
 
