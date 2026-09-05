@@ -88,6 +88,12 @@ function LoginForm() {
               {isSubmitting ? "Logging in…" : "Log in"}
             </Button>
           </form>
+          <p className="mt-5 text-center text-sm text-slate-500">
+            New to Raindeer?{" "}
+            <a href="/signup" className="font-semibold text-brand-600 hover:text-brand-700">
+              Create an account
+            </a>
+          </p>
         </div>
       </div>
     </div>

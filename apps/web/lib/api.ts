@@ -183,6 +183,31 @@ export async function login(email: string, password: string): Promise<LoginRespo
   return res.json();
 }
 
+// Mirrors apps/api/auth/router.py::RegisterRequest (Issue #123, signup
+// step 1 of 3). first_name/last_name aren't stored on User today — the
+// backend only uses them to seed a human-readable Organization name — but
+// they're still real request fields, not decoration this client drops.
+export interface RegisterInput {
+  first_name: string;
+  last_name: string;
+  email: string;
+  password: string;
+}
+
+export async function register(payload: RegisterInput): Promise<LoginResponse> {
+  const res = await fetch(`${API_URL}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
 export async function fetchBrands(token: string): Promise<Brand[]> {
   const res = await fetch(`${API_URL}/brands`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -627,6 +652,67 @@ export async function runOnboardingAgent(token: string, brandId: string): Promis
   }
 
   return res.json();
+}
+
+// Mirrors the events apps/api/routers/onboarding.py::stream_research_preview
+// emits ("log"/"signal"/"done"), each carrying a small JSON `data` payload
+// ({text} for log, {title,url} for signal, {count} for done).
+export interface ResearchStreamEvent {
+  event: "log" | "signal" | "done";
+  data: Record<string, unknown>;
+}
+
+// Reads the onboarding research-preview SSE stream (Issue #123's Aarav
+// interview "scrape" question). Deliberately uses fetch + a manual
+// "event: x\ndata: {...}\n\n" parser rather than the browser's EventSource
+// — EventSource can't attach an Authorization header, and every other
+// endpoint in this file is a bearer-token GET. Resolves once the stream
+// ends (after the backend's "done" event closes the response body).
+export async function streamOnboardingResearch(
+  token: string,
+  brandId: string,
+  onEvent: (event: ResearchStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const res = await fetch(onboardingUrl(brandId, "/research-stream"), {
+    headers: authHeaders(token),
+    signal,
+  });
+
+  if (!res.ok || !res.body) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary !== -1) {
+      const rawEvent = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      boundary = buffer.indexOf("\n\n");
+
+      let eventName = "message";
+      let data = "";
+      for (const line of rawEvent.split("\n")) {
+        if (line.startsWith("event:")) eventName = line.slice(6).trim();
+        else if (line.startsWith("data:")) data = line.slice(5).trim();
+      }
+      if (!data) continue;
+      try {
+        onEvent({ event: eventName as ResearchStreamEvent["event"], data: JSON.parse(data) });
+      } catch {
+        // Malformed chunk (shouldn't happen against our own backend) —
+        // skip it rather than take the whole stream down.
+      }
+    }
+  }
 }
 
 export async function exportBrandReport(

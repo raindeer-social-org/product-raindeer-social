@@ -88,28 +88,31 @@ describe("SocialAccountsPage", () => {
     fetchSocialAccountsMock.mockResolvedValue([]);
   });
 
-  it("renders connected accounts with a status badge per account", async () => {
-    fetchSocialAccountsMock.mockResolvedValue([
-      makeAccount({ id: "a1", status: "active" }),
-      makeAccount({ id: "a2", status: "expired", external_account_id: "urn:li:person:456" }),
-      makeAccount({ id: "a3", status: "revoked", external_account_id: null, token_expires_at: null }),
-    ]);
+  it("shows a connected LinkedIn account plus the not-yet-available platforms", async () => {
+    fetchSocialAccountsMock.mockResolvedValue([makeAccount({ status: "active" })]);
 
     renderPage();
 
     await waitFor(() => expect(fetchSocialAccountsMock).toHaveBeenCalledWith("test-token", "brand-1"));
 
-    expect(await screen.findByText("Active")).toBeInTheDocument();
-    expect(screen.getByText("Expired")).toBeInTheDocument();
-    expect(screen.getByText("Revoked")).toBeInTheDocument();
-    expect(screen.getByText("Account ID: urn:li:person:123")).toBeInTheDocument();
-    expect(screen.getByText("No account ID on file")).toBeInTheDocument();
+    expect(await screen.findByText("Connected · urn:li:person:123")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Disconnect" })).toBeInTheDocument();
+
+    // The platforms with no real backend yet render as inert rows, not
+    // working connect buttons. "X" matches both the platform name and its
+    // avatar initial, so it's checked with getAllByText.
+    expect(screen.getAllByText("X").length).toBeGreaterThan(0);
+    for (const name of ["Instagram", "Threads", "Facebook", "YouTube"]) {
+      expect(screen.getByText(name)).toBeInTheDocument();
+    }
+    expect(screen.getAllByText("Coming soon")).toHaveLength(5);
   });
 
-  it("shows an empty state when nothing is connected for the brand", async () => {
+  it("shows LinkedIn as not connected when there's no account yet", async () => {
     renderPage();
 
-    expect(await screen.findByText("No accounts connected")).toBeInTheDocument();
+    expect(await screen.findByText("Not connected")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
   });
 
   it("starts the LinkedIn OAuth flow and redirects to the authorize URL on success", async () => {
@@ -121,7 +124,7 @@ describe("SocialAccountsPage", () => {
     renderPage();
     await waitFor(() => expect(fetchSocialAccountsMock).toHaveBeenCalled());
 
-    await user.click(screen.getByRole("button", { name: "Connect LinkedIn" }));
+    await user.click(await screen.findByRole("button", { name: "Connect" }));
 
     await waitFor(() => {
       expect(connectLinkedInMock).toHaveBeenCalledWith("test-token", "brand-1");
@@ -138,25 +141,23 @@ describe("SocialAccountsPage", () => {
     renderPage();
     await waitFor(() => expect(fetchSocialAccountsMock).toHaveBeenCalled());
 
-    await user.click(screen.getByRole("button", { name: "Connect LinkedIn" }));
+    await user.click(await screen.findByRole("button", { name: "Connect" }));
 
-    expect(await screen.findByText("LinkedIn isn't configured on this server yet.")).toBeInTheDocument();
+    expect(await screen.findByText("Not configured on this server yet.")).toBeInTheDocument();
     expect(redirectToAuthorizeUrlMock).not.toHaveBeenCalled();
-    // Not a raw/generic backend error message anywhere on the page.
     expect(screen.queryByText("LinkedIn OAuth is not configured")).not.toBeInTheDocument();
   });
 
   it("disconnects an account only after the confirmation step is completed", async () => {
-    fetchSocialAccountsMock.mockResolvedValue([makeAccount({ id: "a1", status: "active" })]);
-    disconnectSocialAccountMock.mockResolvedValue(makeAccount({ id: "a1", status: "revoked" }));
+    fetchSocialAccountsMock.mockResolvedValue([makeAccount({ status: "active" })]);
+    disconnectSocialAccountMock.mockResolvedValue(makeAccount({ status: "revoked" }));
     const user = userEvent.setup();
 
     renderPage();
-    await screen.findByText("Active");
+    await screen.findByText("Connected · urn:li:person:123");
 
     await user.click(screen.getByRole("button", { name: "Disconnect" }));
 
-    // Confirmation dialog is open; the API call hasn't fired yet.
     const dialog = await screen.findByRole("dialog");
     expect(disconnectSocialAccountMock).not.toHaveBeenCalled();
 
@@ -165,18 +166,18 @@ describe("SocialAccountsPage", () => {
     });
 
     await waitFor(() => {
-      expect(disconnectSocialAccountMock).toHaveBeenCalledWith("test-token", "brand-1", "a1");
+      expect(disconnectSocialAccountMock).toHaveBeenCalledWith("test-token", "brand-1", "account-1");
     });
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(await screen.findByText("Revoked")).toBeInTheDocument();
   });
 
   it("cancels the disconnect confirmation without calling the API", async () => {
-    fetchSocialAccountsMock.mockResolvedValue([makeAccount({ id: "a1", status: "active" })]);
+    fetchSocialAccountsMock.mockResolvedValue([makeAccount({ status: "active" })]);
     const user = userEvent.setup();
 
     renderPage();
-    await screen.findByText("Active");
+    await screen.findByText("Connected · urn:li:person:123");
 
     await user.click(screen.getByRole("button", { name: "Disconnect" }));
     const dialog = await screen.findByRole("dialog");
@@ -184,6 +185,6 @@ describe("SocialAccountsPage", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(disconnectSocialAccountMock).not.toHaveBeenCalled();
-    expect(screen.getByText("Active")).toBeInTheDocument();
+    expect(screen.getByText("Connected · urn:li:person:123")).toBeInTheDocument();
   });
 });
