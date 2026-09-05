@@ -4,12 +4,12 @@ import { cn } from "./cn";
 export type BadgeTone = "slate" | "brand" | "green" | "amber" | "red" | "blue";
 
 const TONE_CLASSES: Record<BadgeTone, string> = {
-  slate: "bg-slate-100 text-slate-700 ring-slate-200",
-  brand: "bg-brand-100 text-brand-700 ring-brand-200",
-  green: "bg-emerald-100 text-emerald-700 ring-emerald-200",
-  amber: "bg-amber-100 text-amber-800 ring-amber-200",
-  red: "bg-red-100 text-red-700 ring-red-200",
-  blue: "bg-blue-100 text-blue-700 ring-blue-200",
+  slate: "bg-canvas text-ink-600 ring-line-soft",
+  brand: "bg-brand-50 text-brand-700 ring-brand-100",
+  green: "bg-success-bg text-success ring-success/20",
+  amber: "bg-warning-bg text-warning ring-warning/20",
+  red: "bg-danger-bg text-danger ring-danger/20",
+  blue: "bg-brand-50 text-brand-700 ring-brand-100",
 };
 
 export function Badge({
