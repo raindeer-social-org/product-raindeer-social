@@ -29,30 +29,57 @@ function verdictTone(verdict: string | undefined): BadgeTone {
 
 // The 0-100 score is the headline signal on this page, so it gets a colour
 // band rather than being buried in prose: the same thresholds drive both the
-// badge tone and the meter fill.
+// badge tone and every score-bar fill below. Mirrors the reviewer engine's
+// own approve (>=80) / revise (50-79) / reject (<50) thresholds
+// (packages/agents/pipeline/nodes/reviewer_engine.py::_build_prompt).
 function scoreTone(score: number): BadgeTone {
   if (score >= 80) return "green";
-  if (score >= 60) return "amber";
+  if (score >= 50) return "amber";
   return "red";
 }
 
 const SCORE_BAR_CLASSES: Record<BadgeTone, string> = {
-  green: "bg-emerald-500",
-  amber: "bg-amber-500",
-  red: "bg-red-500",
-  slate: "bg-slate-400",
+  green: "bg-success",
+  amber: "bg-warning",
+  red: "bg-danger",
+  slate: "bg-ink-200",
   brand: "bg-brand-500",
-  blue: "bg-blue-500",
+  blue: "bg-brand-500",
 };
 
-function ScoreMeter({ score }: { score: number }) {
-  const clamped = Math.max(0, Math.min(100, score));
+// The mockup's "Review · Neer" screen shows each draft with a stack of
+// labeled score bars (Brand fit / Platform fit / Sentiment — see
+// "Raindeer Social Startup Onboarding/Raindeer Social.dc.html"'s `r.bars`).
+// The Reviewer Engine doesn't hand back those three as separate sub-scores
+// though — it produces a single 0-100 alignment score per platform that
+// already folds brand voice, compliance, and platform fit together (see
+// reviewer_engine.py's prompt), plus one overall score for the post. So
+// this reuses the mockup's bar visual, but keys each bar by real signal
+// (the overall score, then one row per platform) instead of fabricating
+// sub-metrics that don't exist in the data.
+//
+// `score` is deliberately nullable: an older review row, or a platform the
+// LLM output didn't parse cleanly, can leave this missing — this renders a
+// flat, neutral bar rather than crashing on it.
+function ScoreBar({ label, score }: { label: string; score: number | null | undefined }) {
+  const hasScore = typeof score === "number" && Number.isFinite(score);
+  const clamped = hasScore ? Math.max(0, Math.min(100, score)) : 0;
+  const tone = hasScore ? scoreTone(score) : "slate";
+
   return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200" aria-hidden="true">
-      <div
-        className={cn("h-full rounded-full transition-all", SCORE_BAR_CLASSES[scoreTone(score)])}
-        style={{ width: `${clamped}%` }}
-      />
+    <div className="flex items-center gap-2">
+      <span className="w-20 shrink-0 truncate text-xs text-ink-300" title={label}>
+        {label}
+      </span>
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line-soft" aria-hidden="true">
+        <div
+          className={cn("h-full rounded-full transition-all", SCORE_BAR_CLASSES[tone])}
+          style={{ width: `${clamped}%` }}
+        />
+      </div>
+      <span className="w-9 shrink-0 text-right text-xs font-semibold text-ink-700">
+        {hasScore ? score.toFixed(0) : "—"}
+      </span>
     </div>
   );
 }
@@ -94,6 +121,7 @@ export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule }: 
   const aiReview = latestAiReview(post);
   const humanHistory = humanReviews(post);
   const platforms = Object.keys(post.body_text ?? {});
+  const aiPlatformEntries = aiReview ? Object.entries(platformReviews(aiReview)) : [];
 
   async function run(action: () => Promise<void>) {
     setIsSubmitting(true);
@@ -131,7 +159,7 @@ export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule }: 
 
   return (
     <Card aria-label={`Review post ${post.id}`} className="overflow-hidden">
-      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 p-5">
+      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-line-faint p-5">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
             {platforms.length > 0 ? (
@@ -144,7 +172,7 @@ export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule }: 
               <Badge tone="slate">no platforms</Badge>
             )}
           </div>
-          <p className="mt-2 text-xs text-slate-500">
+          <p className="mt-2 text-xs text-ink-300">
             Paused for review since {new Date(post.created_at).toLocaleString()}
           </p>
         </div>
@@ -152,29 +180,42 @@ export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule }: 
         {aiReview ? (
           <div className="w-40 shrink-0">
             <div className="flex items-center justify-between gap-2">
-              <Badge tone={scoreTone(aiReview.score)}>{aiReview.score.toFixed(0)}/100</Badge>
+              <span className="flex items-center gap-1.5">
+                <span
+                  aria-hidden="true"
+                  className="flex h-4 w-4 items-center justify-center rounded-[5px] bg-gradient-to-br from-agent-neer-from to-agent-neer-to text-[9px] font-extrabold text-white"
+                >
+                  N
+                </span>
+                <Badge tone={scoreTone(aiReview.score)}>{aiReview.score.toFixed(0)}/100</Badge>
+              </span>
               <Badge tone={verdictTone(aiReview.verdict)} dot>
                 {aiReview.verdict}
               </Badge>
             </div>
             <div className="mt-2">
-              <ScoreMeter score={aiReview.score} />
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-line-soft" aria-hidden="true">
+                <div
+                  className={cn("h-full rounded-full transition-all", SCORE_BAR_CLASSES[scoreTone(aiReview.score)])}
+                  style={{ width: `${Math.max(0, Math.min(100, aiReview.score))}%` }}
+                />
+              </div>
             </div>
           </div>
         ) : null}
       </header>
 
-      <section className="border-b border-slate-100 p-5">
-        <h3 className="text-sm font-semibold text-slate-900">Draft</h3>
+      <section className="border-b border-line-faint p-5">
+        <h3 className="text-sm font-semibold text-ink-950">Draft</h3>
 
-        {platforms.length === 0 && <p className="mt-2 text-sm text-slate-500">No generated copy yet.</p>}
+        {platforms.length === 0 && <p className="mt-2 text-sm text-ink-400">No generated copy yet.</p>}
 
         {!isEditing && (
           <div className="mt-3 space-y-3">
             {platforms.map((platform) => (
-              <div key={platform} className="rounded-lg bg-slate-50 p-3">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{platform}</span>
-                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">{post.body_text?.[platform]}</p>
+              <div key={platform} className="rounded-lg bg-canvas p-3">
+                <span className="text-xs font-semibold uppercase tracking-wide text-ink-400">{platform}</span>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-ink-800">{post.body_text?.[platform]}</p>
               </div>
             ))}
           </div>
@@ -205,24 +246,38 @@ export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule }: 
       </section>
 
       {aiReview && (
-        <section className="border-b border-slate-100 bg-brand-50/40 p-5">
-          <h3 className="text-sm font-semibold text-slate-900">
-            AI reviewer score: {aiReview.score.toFixed(0)}/100
-          </h3>
+        <section className="border-b border-line-faint bg-gradient-to-b from-agent-neer-to/10 to-transparent p-5">
+          <div className="flex items-center gap-2">
+            <span
+              aria-hidden="true"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-agent-neer-from to-agent-neer-to text-[10px] font-extrabold text-white"
+            >
+              N
+            </span>
+            <h3 className="text-sm font-semibold text-ink-950">
+              AI reviewer score: {aiReview.score.toFixed(0)}/100
+            </h3>
+          </div>
+
+          {aiPlatformEntries.length > 0 && (
+            <div className="mt-3 space-y-2 rounded-lg border border-line-soft bg-white/70 p-3">
+              <ScoreBar label="Overall" score={aiReview.score} />
+              {aiPlatformEntries.map(([platform, review]) => (
+                <ScoreBar key={platform} label={platform} score={review.score} />
+              ))}
+            </div>
+          )}
 
           <ul className="mt-3 space-y-3">
-            {Object.entries(platformReviews(aiReview)).map(([platform, review]) => (
-              <li key={platform} className="rounded-lg border border-slate-200 bg-white p-3">
+            {aiPlatformEntries.map(([platform, review]) => (
+              <li key={platform} className="rounded-lg border border-line-soft bg-white p-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{platform}</span>
-                  {review.score !== undefined && (
-                    <Badge tone={scoreTone(review.score)}>{review.score.toFixed(0)}/100</Badge>
-                  )}
+                  <span className="text-xs font-semibold uppercase tracking-wide text-ink-400">{platform}</span>
                   {review.verdict && <Badge tone={verdictTone(review.verdict)}>{review.verdict}</Badge>}
                 </div>
 
                 {review.issues && review.issues.length > 0 && (
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-ink-700">
                     {review.issues.map((issue, i) => (
                       <li key={i}>{issue}</li>
                     ))}
@@ -230,9 +285,10 @@ export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule }: 
                 )}
 
                 {review.suggested_edits && (
-                  <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                    {review.suggested_edits}
-                  </p>
+                  <div className="mt-2 rounded-md border border-warning/20 bg-warning-bg px-3 py-2">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-warning">Neer&apos;s note</div>
+                    <p className="mt-0.5 text-sm text-ink-800">{review.suggested_edits}</p>
+                  </div>
                 )}
               </li>
             ))}
@@ -241,11 +297,11 @@ export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule }: 
       )}
 
       {humanHistory.length > 0 && (
-        <section className="border-b border-slate-100 p-5">
-          <h3 className="text-sm font-semibold text-slate-900">Human review history</h3>
+        <section className="border-b border-line-faint p-5">
+          <h3 className="text-sm font-semibold text-ink-950">Human review history</h3>
           <ul className="mt-3 space-y-2">
             {humanHistory.map((feedback) => (
-              <li key={feedback.id} className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+              <li key={feedback.id} className="flex flex-wrap items-center gap-2 text-sm text-ink-600">
                 <Badge tone={verdictTone(feedback.verdict)}>{feedback.verdict}</Badge>
                 {typeof feedback.comments?.comments === "string" && (
                   <span>{feedback.comments.comments as string}</span>
@@ -257,7 +313,7 @@ export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule }: 
       )}
 
       {isRescheduling && (
-        <section className="border-b border-slate-100 p-5">
+        <section className="border-b border-line-faint p-5">
           <Field label="New date and time" htmlFor={`reschedule-${post.id}`}>
             <Input
               id={`reschedule-${post.id}`}
@@ -289,13 +345,13 @@ export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule }: 
         </Field>
 
         {error && (
-          <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+          <p role="alert" className="mt-3 rounded-lg bg-danger-bg px-3 py-2 text-sm font-medium text-danger">
             {error}
           </p>
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-4">
+      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line-faint bg-canvas px-5 py-4">
         {!isEditing && (
           <Button
             type="button"
