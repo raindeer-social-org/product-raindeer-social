@@ -16,9 +16,9 @@ export function StatTile({
 }) {
   return (
     <Card className="p-4">
-      <p className="text-sm text-slate-500">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-slate-900">{value}</p>
-      {secondary ? <p className="mt-0.5 text-xs text-slate-400">{secondary}</p> : null}
+      <p className="text-sm text-ink-400">{label}</p>
+      <p className="mt-1 text-2xl font-semibold text-ink-950">{value}</p>
+      {secondary ? <p className="mt-0.5 text-xs text-ink-300">{secondary}</p> : null}
     </Card>
   );
 }
