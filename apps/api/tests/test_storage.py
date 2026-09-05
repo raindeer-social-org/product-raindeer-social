@@ -25,6 +25,9 @@ def test_upload_returns_public_url(db_session) -> None:
     assert url == "https://project.supabase.co/storage/v1/object/public/brand-assets/org1/brand1/logo"
     call_kwargs = mock_post.call_args.kwargs
     assert call_kwargs["headers"]["Authorization"] == "Bearer test-key"
+    # Required alongside Authorization — Supabase's gateway 403s current-
+    # format (sb_secret_.../sb_publishable_...) project keys without it.
+    assert call_kwargs["headers"]["apikey"] == "test-key"
     assert call_kwargs["headers"]["Content-Type"] == "image/png"
     assert call_kwargs["headers"]["x-upsert"] == "true"
     assert call_kwargs["content"] == b"fake-image-bytes"
@@ -45,6 +48,7 @@ def test_delete_calls_correct_endpoint(db_session) -> None:
     url_called = mock_delete.call_args.args[0]
     assert url_called == "https://project.supabase.co/storage/v1/object/brand-assets/org1/brand1/logo"
     assert mock_delete.call_args.kwargs["headers"]["Authorization"] == "Bearer test-key"
+    assert mock_delete.call_args.kwargs["headers"]["apikey"] == "test-key"
 
 
 def test_upload_logs_integration_call(db_session) -> None:

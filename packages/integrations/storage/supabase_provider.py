@@ -21,6 +21,12 @@ class SupabaseStorageProvider(StorageProvider):
                 f"{self.base_url}/storage/v1/object/{self.bucket}/{path}",
                 headers={
                     "Authorization": f"Bearer {self.service_key}",
+                    # Supabase's gateway rejects requests missing this
+                    # header ("Invalid Compact JWS") for project API keys
+                    # issued in the current sb_secret_.../sb_publishable_...
+                    # format — Authorization alone (sufficient for the
+                    # legacy JWT-format service_role key) is not enough.
+                    "apikey": self.service_key,
                     "Content-Type": content_type,
                     "x-upsert": "true",
                 },
@@ -34,7 +40,7 @@ class SupabaseStorageProvider(StorageProvider):
         with track_integration_call("supabase", "storage"):
             response = httpx.delete(
                 f"{self.base_url}/storage/v1/object/{self.bucket}/{path}",
-                headers={"Authorization": f"Bearer {self.service_key}"},
+                headers={"Authorization": f"Bearer {self.service_key}", "apikey": self.service_key},
                 timeout=self.timeout,
             )
             response.raise_for_status()
