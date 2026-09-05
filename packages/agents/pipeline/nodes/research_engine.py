@@ -168,6 +168,25 @@ def _research_brief(db: Session, post: Post) -> dict[str, Any]:
     }
 
 
+def run_standalone_research(db: Session, post: Post) -> dict[str, Any]:
+    """Issue #126 — the Research workspace page's "Run new research"
+    action. Runs exactly the same research brief the pipeline node above
+    produces, but for a standalone Post created ad hoc (no calendar event,
+    no downstream Creative/Generation stages) rather than one advancing
+    through the full pipeline graph — so a brand can see fresh trend
+    results without paying for the other four stages just to view them.
+
+    A thin wrapper around _research_brief rather than a second
+    implementation: same search/brand-context logic, same degrade-on-
+    failure behavior, same output shape. The caller (apps/api/routers/
+    research.py) is responsible for creating the ad hoc Post and logging
+    the AgentRun row — this function only produces the brief, same
+    division of responsibility build_research_node's node function has
+    with run_pipeline's AgentRun-logging (see graph.py).
+    """
+    return _research_brief(db, post)
+
+
 def build_research_node(db: Session | None):
     """Builds the real "research" stage node function, closing over `db`.
     Mirrors graph.py's _make_stub_node factory shape/conventions, but for

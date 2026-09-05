@@ -86,6 +86,47 @@ function IconReport() {
     </svg>
   );
 }
+function IconResearch() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M20 20l-4.8-4.8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+function IconCreative() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M12 3l2.2 5.4L20 10l-5.4 2.2L12 18l-2.2-5.8L4 10l5.8-1.6L12 3Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+function IconCreatePost() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M4 20l1.2-4.6L16.6 3.9a1.6 1.6 0 012.3 0l1.2 1.2a1.6 1.6 0 010 2.3L8.6 18.8 4 20Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+function IconContentAI() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="4" y="5" width="16" height="14" rx="2" stroke="currentColor" strokeWidth="1.8" />
+      <circle cx="9" cy="10" r="1.6" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M4 16l5-4 4 3 3-2.5 4 3.5" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+    </svg>
+  );
+}
 function IconSettings() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -101,13 +142,18 @@ function IconSettings() {
 }
 
 // Every route here already exists as a real page. Screens still landing
-// from the mockup migration (Arena, Research, Creative, Create Post,
-// Content AI, Settings) add their own nav entry in their own PR once the
-// page itself exists — keeps this list from linking to 404s in the
-// meantime.
+// from the mockup migration (Arena, Settings) add their own nav entry in
+// their own PR once the page itself exists — keeps this list from linking
+// to 404s in the meantime. Research/Creative/Create Post/Content AI
+// (Issue #126) are the first of those standalone agent-workspace pages to
+// land.
 const NAV_LINKS: { href: string; label: string; icon: () => ReactNode }[] = [
   { href: "/", label: "Dashboard", icon: IconDashboard },
   { href: "/calendar", label: "Calendar", icon: IconCalendar },
+  { href: "/research", label: "Research · Ved", icon: IconResearch },
+  { href: "/creative", label: "Creative · Keshav", icon: IconCreative },
+  { href: "/create-post", label: "Create Post", icon: IconCreatePost },
+  { href: "/content-ai", label: "Content AI", icon: IconContentAI },
   { href: "/review-queue", label: "Review Queue", icon: IconReview },
   { href: "/brands", label: "Brands", icon: IconBrand },
   { href: "/onboarding", label: "Onboarding", icon: IconOnboarding },
