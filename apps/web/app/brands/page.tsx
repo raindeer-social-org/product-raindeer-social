@@ -1,12 +1,15 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
+  ApiError,
   type Brand,
   type BrandInput,
   type BrandUpdateInput,
   createBrand,
   deleteBrand,
+  exportBrandReport,
   removeBrandLogo,
   updateBrand,
   uploadBrandLogo,
@@ -57,9 +60,11 @@ function BrandCardSkeleton() {
 
 export default function BrandsPage() {
   const { token } = useAuth();
-  const { brands, isLoading, error, refresh } = useBrand();
+  const { brands, isLoading, error, refresh, setSelectedBrandId } = useBrand();
   const { push } = useToast();
+  const router = useRouter();
   const [modalState, setModalState] = useState<ModalState>(null);
+  const [exportingBrandId, setExportingBrandId] = useState<string | null>(null);
 
   const editingBrand =
     modalState?.mode === "edit" ? brands.find((brand) => brand.id === modalState.brandId) ?? null : null;
@@ -124,6 +129,36 @@ export default function BrandsPage() {
     }
   }
 
+  // Reuses apps/web/app/onboarding/page.tsx's exact exportBrandReport call
+  // rather than reimplementing it — same endpoint, same "open the PDF in a
+  // new tab" behavior.
+  async function handleExportPdf(brand: Brand) {
+    if (!token) return;
+    setExportingBrandId(brand.id);
+    try {
+      const result = await exportBrandReport(token, brand.id);
+      if (typeof window !== "undefined") {
+        window.open(result.url, "_blank", "noopener,noreferrer");
+      }
+      push("Brand report PDF ready.", "success");
+    } catch (err) {
+      push(err instanceof ApiError ? err.message : "Failed to export PDF report.", "error");
+    } finally {
+      setExportingBrandId(null);
+    }
+  }
+
+  // /onboarding acts on whichever brand is selected in the BrandSwitcher,
+  // not a per-brand URL — re-interviewing brand X from its own card has to
+  // select it first so the onboarding page it lands on is actually X's.
+  //
+  // TODO(#123): once the dedicated Aarav interview flow lands, point this
+  // at that page instead of the general onboarding questionnaire.
+  function handleReinterview(brand: Brand) {
+    setSelectedBrandId(brand.id);
+    router.push("/onboarding");
+  }
+
   return (
     <div>
       <PageHeader
@@ -133,7 +168,7 @@ export default function BrandsPage() {
       />
 
       {error ? (
-        <p role="alert" className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+        <p role="alert" className="mb-4 rounded-lg bg-danger-bg px-3 py-2 text-sm font-medium text-danger">
           {error}
         </p>
       ) : null}
@@ -159,6 +194,9 @@ export default function BrandsPage() {
               brand={brand}
               onEdit={() => openEditModal(brand)}
               onDelete={() => handleDelete(brand)}
+              onExportPdf={() => handleExportPdf(brand)}
+              onReinterview={() => handleReinterview(brand)}
+              isExporting={exportingBrandId === brand.id}
             />
           ))}
         </div>

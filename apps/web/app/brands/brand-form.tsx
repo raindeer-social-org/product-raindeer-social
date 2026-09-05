@@ -112,7 +112,7 @@ export function BrandForm({ brand, onCancel, onSubmit, onUploadLogo, onRemoveLog
     <form id="brand-form" onSubmit={handleSubmit} noValidate className="space-y-4">
       {isEdit && brand ? (
         <div className="space-y-1.5">
-          <span className="block text-sm font-medium text-slate-700">Logo</span>
+          <span className="block text-sm font-medium text-ink-800">Logo</span>
           <div className="flex items-center gap-3">
             {brand.logo_url ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -122,7 +122,7 @@ export function BrandForm({ brand, onCancel, onSubmit, onUploadLogo, onRemoveLog
                 className="h-12 w-12 rounded-full object-cover"
               />
             ) : (
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-xs font-medium text-slate-400">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-canvas text-xs font-medium text-ink-300">
                 No logo
               </div>
             )}
@@ -188,7 +188,7 @@ export function BrandForm({ brand, onCancel, onSubmit, onUploadLogo, onRemoveLog
               <span
                 key={`${color}-${index}`}
                 title={color}
-                className="h-5 w-5 rounded-full border border-slate-200"
+                className="h-5 w-5 rounded-full border border-line"
                 style={{ backgroundColor: color }}
               />
             ))}
@@ -224,7 +224,7 @@ export function BrandForm({ brand, onCancel, onSubmit, onUploadLogo, onRemoveLog
       </Field>
 
       {error ? (
-        <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+        <p role="alert" className="rounded-lg bg-danger-bg px-3 py-2 text-sm font-medium text-danger">
           {error}
         </p>
       ) : null}
