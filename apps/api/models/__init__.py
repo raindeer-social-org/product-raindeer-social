@@ -1,6 +1,7 @@
 from apps.api.models.agent_run import AgentRun, AgentType
 from apps.api.models.brand import Brand
 from apps.api.models.brand_report_chunk import BrandReportChunk
+from apps.api.models.brand_settings import BrandSettings
 from apps.api.models.content_calendar_event import (
     SUPPORTED_PLATFORMS,
     CalendarEventStatus,
@@ -24,6 +25,7 @@ __all__ = [
     "AgentType",
     "Brand",
     "BrandReportChunk",
+    "BrandSettings",
     "CalendarEventStatus",
     "ContentCalendarEvent",
     "EngagementSnapshot",

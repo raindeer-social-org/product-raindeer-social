@@ -24,15 +24,18 @@ export const CATEGORICAL_PALETTE = [
 // never a value-ramp over nominal categories like platform names.
 export const SINGLE_SERIES_COLOR = CATEGORICAL_PALETTE[0];
 
-// Chart chrome — one step off the app's existing slate scale, so charts
-// read as part of this design system rather than importing a second gray
-// ramp. Mirrors the roles in palette.md's "Chart chrome & ink" table.
+// Chart chrome — pinned to this app's "ink" design-system scale
+// (apps/web/tailwind.config.ts, sourced from the Raindeer mockup) rather
+// than importing a second gray ramp, so charts read as part of the same
+// system as every other restyled page. Mirrors the roles in palette.md's
+// "Chart chrome & ink" table, mapped onto the nearest ink-* step by
+// lightness.
 export const CHART_CHROME = {
-  gridline: "#e2e8f0", // slate-200 hairline
-  axis: "#cbd5e1", // slate-300 baseline
-  mutedText: "#94a3b8", // slate-400 axis/tick labels
-  secondaryText: "#64748b", // slate-500
-  primaryText: "#0f172a", // slate-900
+  gridline: "#E3E8F5", // ink-50 hairline
+  axis: "#C7D2EC", // ink-100 baseline
+  mutedText: "#98A2BC", // ink-200 axis/tick labels
+  secondaryText: "#6A7691", // ink-400
+  primaryText: "#0A1633", // ink-950
   surface: "#ffffff",
 };
 

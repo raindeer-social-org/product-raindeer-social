@@ -11,7 +11,7 @@ export function PlatformTable({ platforms }: { platforms: PlatformAggregate[] })
     <div className="overflow-x-auto">
       <table className="w-full text-left text-sm">
         <thead>
-          <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-400">
+          <tr className="border-b border-line-soft text-xs uppercase tracking-wide text-ink-300">
             <th scope="col" className="py-2 pr-4 font-medium">
               Platform
             </th>
@@ -34,11 +34,11 @@ export function PlatformTable({ platforms }: { platforms: PlatformAggregate[] })
         </thead>
         <tbody className="[font-variant-numeric:tabular-nums]">
           {platforms.map((platform) => (
-            <tr key={platform.platform} className="border-b border-slate-100 last:border-0">
-              <th scope="row" className="py-2 pr-4 font-medium capitalize text-slate-900">
+            <tr key={platform.platform} className="border-b border-line-faint last:border-0">
+              <th scope="row" className="py-2 pr-4 font-medium capitalize text-ink-950">
                 {platform.platform}
               </th>
-              <td className="py-2 pr-4 text-slate-600">{platform.snapshot_count.toLocaleString("en-US")}</td>
+              <td className="py-2 pr-4 text-ink-600">{platform.snapshot_count.toLocaleString("en-US")}</td>
               <Cell total={platform.total_likes} average={platform.average_likes} />
               <Cell total={platform.total_comments} average={platform.average_comments} />
               <Cell total={platform.total_shares} average={platform.average_shares} />
@@ -53,8 +53,8 @@ export function PlatformTable({ platforms }: { platforms: PlatformAggregate[] })
 
 function Cell({ total, average, last }: { total: number; average: number; last?: boolean }) {
   return (
-    <td className={last ? "py-2 text-slate-600" : "py-2 pr-4 text-slate-600"}>
-      {formatCompactNumber(total)} <span className="text-slate-400">(avg {formatAverage(average)})</span>
+    <td className={last ? "py-2 text-ink-600" : "py-2 pr-4 text-ink-600"}>
+      {formatCompactNumber(total)} <span className="text-ink-300">(avg {formatAverage(average)})</span>
     </td>
   );
 }

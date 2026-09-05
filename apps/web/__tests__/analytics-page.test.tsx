@@ -4,12 +4,13 @@ import userEvent from "@testing-library/user-event";
 import AnalyticsPage from "@/app/analytics/page";
 import { AuthProvider } from "@/lib/auth-context";
 import { BrandProvider } from "@/lib/brand-context";
-import type { BrandAnalyticsSummary, PlatformAggregate, PostAnalyticsAggregate, PostAnalyticsTrend } from "@/lib/api";
+import type { BrandAnalyticsSummary, PlatformAggregate, PostAnalyticsAggregate, PostAnalyticsTrend, Report } from "@/lib/api";
 
 const fetchBrandsMock = vi.fn();
 const fetchAnalyticsSummaryMock = vi.fn();
 const fetchPostAnalyticsAggregateMock = vi.fn();
 const fetchPostAnalyticsTrendMock = vi.fn();
+const fetchReportsMock = vi.fn();
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
@@ -19,8 +20,24 @@ vi.mock("@/lib/api", async () => {
     fetchAnalyticsSummary: (...args: unknown[]) => fetchAnalyticsSummaryMock(...args),
     fetchPostAnalyticsAggregate: (...args: unknown[]) => fetchPostAnalyticsAggregateMock(...args),
     fetchPostAnalyticsTrend: (...args: unknown[]) => fetchPostAnalyticsTrendMock(...args),
+    fetchReports: (...args: unknown[]) => fetchReportsMock(...args),
   };
 });
+
+function makeReport(overrides: Partial<Report> = {}): Report {
+  return {
+    id: "report-1",
+    brand_id: "brand-1",
+    period_start: "2026-07-20T00:00:00Z",
+    period_end: "2026-07-27T00:00:00Z",
+    summary: "Carousels on LinkedIn carried the week, 2.4x the engagement of text posts.",
+    recommendations: ["Post more carousels."],
+    metrics: { post_count: 6 },
+    model: "gpt-test",
+    created_at: "2026-07-27T00:00:00Z",
+    ...overrides,
+  };
+}
 
 const BRANDS = [
   {
@@ -154,12 +171,14 @@ describe("AnalyticsPage", () => {
     fetchAnalyticsSummaryMock.mockReset();
     fetchPostAnalyticsAggregateMock.mockReset();
     fetchPostAnalyticsTrendMock.mockReset();
+    fetchReportsMock.mockReset();
 
     window.localStorage.clear();
     window.localStorage.setItem("raindeer.auth.token", "test-token");
 
     fetchBrandsMock.mockResolvedValue(BRANDS);
     fetchAnalyticsSummaryMock.mockResolvedValue(makeSummary());
+    fetchReportsMock.mockResolvedValue([]);
   });
 
   it("fetches and renders the brand summary with real numbers", async () => {
@@ -245,5 +264,28 @@ describe("AnalyticsPage", () => {
     });
 
     expect(await screen.findByText("No engagement snapshots yet")).toBeInTheDocument();
+  });
+
+  it("renders the latest weekly report as the AI weekly report card, linking to /reports", async () => {
+    fetchReportsMock.mockResolvedValue([
+      makeReport({ summary: "Carousels on LinkedIn carried the week." }),
+      makeReport({ id: "report-0", summary: "An older report." }),
+    ]);
+
+    renderPage();
+
+    expect(await screen.findByText("WEEKLY REPORT · AI")).toBeInTheDocument();
+    expect(screen.getByText(/Carousels on LinkedIn carried the week/)).toBeInTheDocument();
+    expect(screen.queryByText(/An older report/)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Read the full report/ })).toHaveAttribute("href", "/reports");
+  });
+
+  it("shows a no-report-yet state in the weekly report card when there are no reports", async () => {
+    fetchReportsMock.mockResolvedValue([]);
+
+    renderPage();
+
+    expect(await screen.findByText("WEEKLY REPORT · AI")).toBeInTheDocument();
+    expect(screen.getByText(/No weekly report yet/)).toBeInTheDocument();
   });
 });

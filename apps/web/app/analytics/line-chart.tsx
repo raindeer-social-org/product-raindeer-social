@@ -90,7 +90,7 @@ export function LineChart({
       {series.length >= 2 ? (
         <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1">
           {series.map((s) => (
-            <div key={s.name} className="flex items-center gap-1.5 text-xs text-slate-600">
+            <div key={s.name} className="flex items-center gap-1.5 text-xs text-ink-600">
               <span aria-hidden="true" className="inline-block h-0.5 w-3 rounded" style={{ backgroundColor: s.color }} />
               {s.name}
             </div>
@@ -186,18 +186,18 @@ export function LineChart({
         </svg>
       </div>
       {hoverX !== null && nearestBySeries ? (
-        <div className="mt-2 rounded-lg border border-slate-200 bg-white p-2 text-xs shadow-card">
+        <div className="mt-2 rounded-lg border border-line-soft bg-white p-2 text-xs shadow-card">
           {series.map((s, i) => {
             const point = nearestBySeries[i];
             if (!point) return null;
             return (
               <div key={s.name} className="flex items-center justify-between gap-4 py-0.5">
-                <span className="flex items-center gap-1.5 text-slate-500">
+                <span className="flex items-center gap-1.5 text-ink-400">
                   <span aria-hidden="true" className="inline-block h-0.5 w-3 rounded" style={{ backgroundColor: s.color }} />
                   {s.name}
-                  <span className="text-slate-400">{formatTime(point.t)}</span>
+                  <span className="text-ink-300">{formatTime(point.t)}</span>
                 </span>
-                <span className="font-semibold text-slate-900">{formatValue(point.value)}</span>
+                <span className="font-semibold text-ink-950">{formatValue(point.value)}</span>
               </div>
             );
           })}
