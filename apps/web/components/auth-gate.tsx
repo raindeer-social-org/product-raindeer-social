@@ -9,16 +9,26 @@ import { Nav } from "@/components/nav";
 // Routes reachable without a token. Everything else is gated.
 const PUBLIC_PATHS = ["/login"];
 
+// Routes that render their own full-height shell instead of the light
+// Nav sidebar + padded <main> every other authenticated route gets. The
+// Content Arena (Issue #124, apps/web/app/arena/page.tsx) is a
+// deliberately separate dark visual world from the rest of the app — see
+// tailwind.config.ts's `arenadark` tokens — so it needs the full viewport
+// to itself, not squeezed into the app shell's max-w-6xl column.
+const FULL_BLEED_PATHS = ["/arena"];
+
 /**
  * Wraps the whole app (mounted from app/layout.tsx). Redirects
  * unauthenticated visitors to /login on every protected route, and renders
- * the shell nav once a session is present.
+ * the shell nav once a session is present (except on FULL_BLEED_PATHS,
+ * which render directly — still gated by the same redirect logic below).
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const { token, isLoading } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const isPublicPath = PUBLIC_PATHS.includes(pathname);
+  const isFullBleed = FULL_BLEED_PATHS.some((path) => pathname.startsWith(path));
 
   useEffect(() => {
     if (isLoading || isPublicPath) return;
@@ -43,6 +53,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (!token) {
     // Redirect kicked off above; render nothing while it lands.
     return null;
+  }
+
+  if (isFullBleed) {
+    return <>{children}</>;
   }
 
   return (

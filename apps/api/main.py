@@ -8,6 +8,7 @@ from apps.api.middleware.logging import RequestLoggingMiddleware, configure_json
 from apps.api.middleware.rate_limit import RateLimitMiddleware
 from apps.api.observability import init_sentry
 from apps.api.routers.analytics import router as analytics_router
+from apps.api.routers.arena import router as arena_router
 from apps.api.routers.brands import router as brands_router
 from apps.api.routers.calendar import router as calendar_router
 from apps.api.routers.onboarding import router as onboarding_router
@@ -37,6 +38,7 @@ app.add_middleware(
 )
 app.include_router(auth_router)
 app.include_router(analytics_router)
+app.include_router(arena_router)
 app.include_router(brands_router)
 app.include_router(calendar_router)
 app.include_router(onboarding_router)

@@ -1,5 +1,13 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { ApiError, createBrand, fetchBrands, login, uploadBrandLogo } from "@/lib/api";
+import {
+  ApiError,
+  createBrand,
+  fetchArenaRunForEvent,
+  fetchBrands,
+  fetchLatestArenaRun,
+  login,
+  uploadBrandLogo,
+} from "@/lib/api";
 
 describe("api client", () => {
   const originalFetch = global.fetch;
@@ -95,5 +103,48 @@ describe("api client", () => {
     expect(options.headers.Authorization).toBe("Bearer test-token");
     expect(options.body).toBeInstanceOf(FormData);
     expect((options.body as FormData).get("file")).toBe(file);
+  });
+
+  it("fetchArenaRunForEvent hits the by-event endpoint with the bearer token", async () => {
+    const run = { calendar_event_id: "event-1", post: null, agent_runs: [], review_feedback: [] };
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => run,
+    });
+
+    const result = await fetchArenaRunForEvent("test-token", "brand-1", "event-1");
+
+    expect(result).toEqual(run);
+    const [url, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/brands/brand-1/arena/by-event/event-1");
+    expect(options.headers.Authorization).toBe("Bearer test-token");
+  });
+
+  it("fetchArenaRunForEvent raises ApiError on non-OK responses", async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({ detail: "Calendar event not found" }),
+    });
+
+    await expect(fetchArenaRunForEvent("test-token", "brand-1", "missing")).rejects.toMatchObject({
+      message: "Calendar event not found",
+      status: 404,
+    });
+  });
+
+  it("fetchLatestArenaRun hits the latest endpoint with the bearer token", async () => {
+    const run = { calendar_event_id: null, post: null, agent_runs: [], review_feedback: [] };
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => run,
+    });
+
+    const result = await fetchLatestArenaRun("test-token", "brand-1");
+
+    expect(result).toEqual(run);
+    const [url, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/brands/brand-1/arena/latest");
+    expect(options.headers.Authorization).toBe("Bearer test-token");
   });
 });
