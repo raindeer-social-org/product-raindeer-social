@@ -214,6 +214,42 @@ def test_viewer_cannot_run_agent(db_session) -> None:
 
 
 @uses_test_session
+def test_research_stream_emits_log_and_done_events(db_session) -> None:
+    brand, user = _setup_brand(db_session)
+    headers = _auth_headers(user)
+
+    from packages.integrations.search.base import SearchResult
+
+    fake_results = [SearchResult(title="Acme Widgets", url="https://acme.test", content="...")]
+    with patch(
+        "apps.api.routers.onboarding.search_brand_overview", return_value=fake_results
+    ) as mock_search:
+        response = client.get(f"/brands/{brand.id}/onboarding/research-stream", headers=headers)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    mock_search.assert_called_once_with(brand.name)
+    body = response.text
+    assert "event: log" in body
+    assert "event: signal" in body
+    assert "Acme Widgets" in body
+    assert "event: done" in body
+    assert '"count": 1' in body
+
+
+@uses_test_session
+def test_research_stream_requires_org_membership(db_session) -> None:
+    brand, _owner = _setup_brand(db_session, UserRole.EDITOR, suffix="-1")
+    _brand2, other_user = _setup_brand(db_session, UserRole.EDITOR, suffix="-2")
+
+    response = client.get(
+        f"/brands/{brand.id}/onboarding/research-stream", headers=_auth_headers(other_user)
+    )
+
+    assert response.status_code == 404
+
+
+@uses_test_session
 def test_cross_org_onboarding_access_returns_404(db_session) -> None:
     brand, _owner = _setup_brand(db_session, UserRole.EDITOR, suffix="-1")
     _brand2, other_user = _setup_brand(db_session, UserRole.EDITOR, suffix="-2")

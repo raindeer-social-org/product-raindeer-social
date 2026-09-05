@@ -1,6 +1,9 @@
+import json
 import uuid
+from collections.abc import Generator
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from apps.api.auth.dependencies import CurrentUser, get_current_user
@@ -11,7 +14,7 @@ from apps.api.schemas.brand import BrandRead
 from apps.api.schemas.onboarding import OnboardingRead, OnboardingUpsert
 from packages.agents.onboarding.embedding import embed_brand_report
 from packages.agents.onboarding.graph import run_onboarding_agent
-from packages.agents.onboarding.research_step import run_onboarding_research
+from packages.agents.onboarding.research_step import run_onboarding_research, search_brand_overview
 
 router = APIRouter(prefix="/brands/{brand_id}/onboarding", tags=["onboarding"])
 
@@ -107,6 +110,47 @@ def complete_onboarding(
     db.flush()
     db.refresh(response)
     return response
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+@router.get("/research-stream")
+def stream_research_preview(
+    brand_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> StreamingResponse:
+    """Issue #123: additive, read-only Server-Sent-Events endpoint the
+    Aarav onboarding interview's "scrape" question uses to show real
+    progress while previewing what public web research turns up for a
+    brand.
+
+    This reuses the exact same SearchProvider-backed search
+    (search_brand_overview, a thin wrapper the onboarding research step
+    below already used privately) that run_onboarding_research runs later
+    for the brand_report synthesis agent — just surfaced live, and earlier
+    in the flow. It deliberately does NOT call run_onboarding_research
+    itself: that function also requires a competitors list and is only
+    reachable once onboarding.is_complete, neither of which holds this
+    early in the interview. Nothing here is persisted — it's a live
+    preview, not a second copy of OnboardingResearch — so there's no new
+    table/column and no interaction with the real research run that
+    happens later at /run-agent.
+    """
+    brand = _get_org_brand(db, brand_id, current_user.org_id)
+
+    def event_stream() -> Generator[str, None, None]:
+        yield _sse("log", {"text": f"Connecting to {brand.name}’s public presence…"})
+        yield _sse("log", {"text": "Searching the public web for a company overview…"})
+        results = search_brand_overview(brand.name)
+        yield _sse("log", {"text": f"Found {len(results)} public signal(s)."})
+        for result in results:
+            yield _sse("signal", {"title": result.title, "url": result.url})
+        yield _sse("done", {"count": len(results)})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.post("/run-agent", response_model=BrandRead)

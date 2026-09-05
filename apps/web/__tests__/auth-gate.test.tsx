@@ -75,4 +75,41 @@ describe("AuthGate", () => {
       expect(replace).toHaveBeenCalledWith("/login?from=%2Fanalytics");
     });
   });
+
+  it("never redirects when already on the public /signup route", async () => {
+    mockPathname = "/signup";
+
+    renderGate();
+
+    await waitFor(() => {
+      expect(screen.getByText("protected content")).toBeInTheDocument();
+    });
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("redirects /signup/brand to /login when there is no token (still gated, just chromeless)", async () => {
+    mockPathname = "/signup/brand";
+
+    renderGate();
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/login?from=%2Fsignup%2Fbrand");
+    });
+    expect(screen.queryByText("protected content")).not.toBeInTheDocument();
+  });
+
+  it("renders /onboarding/interview without the Nav wrapper once a token is present", async () => {
+    mockPathname = "/onboarding/interview";
+    window.localStorage.setItem("raindeer.auth.token", "test-token");
+
+    renderGate();
+
+    await waitFor(() => {
+      expect(screen.getByText("protected content")).toBeInTheDocument();
+    });
+    expect(replace).not.toHaveBeenCalled();
+    // Nav renders a "raindeer." wordmark + nav links; none of that should
+    // be present on a chromeless route.
+    expect(screen.queryByRole("navigation", { name: "Main navigation" })).not.toBeInTheDocument();
+  });
 });
