@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   type CalendarEvent,
   type CalendarEventInput,
+  type CalendarEventStatus,
   type CalendarEventUpdateInput,
   createCalendarEvent,
   deleteCalendarEvent,
@@ -16,9 +17,14 @@ import { Button } from "@/components/ui/Button";
 import { cn } from "@/components/ui/cn";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { AutogenModal } from "./autogen-modal";
 import { addDays, addMonths, formatMonthLabel, formatWeekRangeLabel } from "./date-utils";
+import { DayView } from "./day-view";
 import { EventForm } from "./event-form";
 import { MonthView } from "./month-view";
+import { platformLabel, primaryPlatformColor } from "./platform";
+import { PostPreviewModal } from "./post-preview-modal";
+import { CALENDAR_EVENT_STATUSES, STATUS_LABELS } from "./status";
 import { WeekView } from "./week-view";
 
 // How often to silently re-poll while the calendar is mounted, so status
@@ -27,7 +33,7 @@ import { WeekView } from "./week-view";
 // re-polled on window focus for the common "tabbed away and back" case.
 const POLL_INTERVAL_MS = 15000;
 
-type ViewMode = "month" | "week";
+type ViewMode = "day" | "week" | "month";
 
 interface FormState {
   event: CalendarEvent | null;
@@ -43,7 +49,12 @@ export default function CalendarPage() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [formState, setFormState] = useState<FormState | null>(null);
+  const [previewEvent, setPreviewEvent] = useState<CalendarEvent | null>(null);
+  const [showAutogen, setShowAutogen] = useState(false);
+  const [platformFilters, setPlatformFilters] = useState<string[]>([]);
+  const [statusFilters, setStatusFilters] = useState<CalendarEventStatus[]>([]);
 
   const loadEvents = useCallback(
     async (showSpinner: boolean) => {
@@ -82,11 +93,64 @@ export default function CalendarPage() {
     };
   }, [loadEvents]);
 
+  // Reset filters whenever the brand scope changes — a platform/status
+  // filter picked for one brand's events isn't meaningful for another's.
+  useEffect(() => {
+    setPlatformFilters([]);
+    setStatusFilters([]);
+  }, [selectedBrandId]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timeout = setTimeout(() => setNotice(null), 6000);
+    return () => clearTimeout(timeout);
+  }, [notice]);
+
+  const platformCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const event of events) {
+      for (const platform of event.target_platforms) {
+        counts.set(platform, (counts.get(platform) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [events]);
+
+  const statusCounts = useMemo(() => {
+    const counts = new Map<CalendarEventStatus, number>();
+    for (const event of events) {
+      counts.set(event.status, (counts.get(event.status) ?? 0) + 1);
+    }
+    return counts;
+  }, [events]);
+
+  const filteredEvents = useMemo(() => {
+    return events.filter((event) => {
+      const platformMatch =
+        platformFilters.length === 0 || event.target_platforms.some((p) => platformFilters.includes(p));
+      const statusMatch = statusFilters.length === 0 || statusFilters.includes(event.status);
+      return platformMatch && statusMatch;
+    });
+  }, [events, platformFilters, statusFilters]);
+
+  function togglePlatformFilter(platform: string) {
+    setPlatformFilters((current) =>
+      current.includes(platform) ? current.filter((p) => p !== platform) : [...current, platform]
+    );
+  }
+
+  function toggleStatusFilter(status: CalendarEventStatus) {
+    setStatusFilters((current) =>
+      current.includes(status) ? current.filter((s) => s !== status) : [...current, status]
+    );
+  }
+
   function openCreateForm(date: Date) {
     setFormState({ event: null, defaultDate: date });
   }
 
   function openEditForm(event: CalendarEvent) {
+    setPreviewEvent(null);
     setFormState({ event, defaultDate: null });
   }
 
@@ -115,19 +179,51 @@ export default function CalendarPage() {
     setFormState(null);
   }
 
+  // The wizard hands back plain event payloads (see autogen-modal.tsx);
+  // this is the "real bulk pipeline generation" trigger the issue asks
+  // for. There's no bulk-create endpoint on the calendar-events router
+  // (apps/api/routers/calendar.py) — each SCHEDULED event just needs to
+  // exist for the existing pipeline_trigger job
+  // (packages/agents/pipeline/trigger.py, polled by apps/api/worker.py's
+  // Celery beat) to pick it up on its own once it's within
+  // Settings.pipeline_trigger_lead_minutes of its target_datetime — so
+  // looping the existing single-event create endpoint client-side is the
+  // simplest approach that's actually consistent with how #29 already
+  // works, rather than inventing a second, parallel bulk-generation path.
+  async function handleAutogenerate(payloads: CalendarEventInput[]) {
+    if (!token || !selectedBrandId) return;
+    const created: CalendarEvent[] = [];
+    for (const payload of payloads) {
+      created.push(await createCalendarEvent(token, selectedBrandId, payload));
+    }
+    setEvents((current) => [...current, ...created]);
+    setShowAutogen(false);
+    setNotice(`Created ${created.length} scheduled post${created.length === 1 ? "" : "s"}.`);
+  }
+
   function goToday() {
     setReferenceDate(new Date());
   }
 
   function goPrevious() {
-    setReferenceDate((current) => (view === "month" ? addMonths(current, -1) : addDays(current, -7)));
+    setReferenceDate((current) =>
+      view === "month" ? addMonths(current, -1) : view === "week" ? addDays(current, -7) : addDays(current, -1)
+    );
   }
 
   function goNext() {
-    setReferenceDate((current) => (view === "month" ? addMonths(current, 1) : addDays(current, 7)));
+    setReferenceDate((current) =>
+      view === "month" ? addMonths(current, 1) : view === "week" ? addDays(current, 7) : addDays(current, 1)
+    );
   }
 
   const today = new Date();
+  const periodLabel =
+    view === "month"
+      ? formatMonthLabel(referenceDate)
+      : view === "week"
+        ? formatWeekRangeLabel(referenceDate)
+        : referenceDate.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
 
   return (
     <div>
@@ -146,57 +242,114 @@ export default function CalendarPage() {
                 role="group"
                 aria-label="Calendar view"
               >
-                <button
-                  type="button"
-                  aria-pressed={view === "month"}
-                  onClick={() => setView("month")}
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                    view === "month" ? "bg-brand-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100",
-                  )}
-                >
-                  Month
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={view === "week"}
-                  onClick={() => setView("week")}
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                    view === "week" ? "bg-brand-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100",
-                  )}
-                >
-                  Week
-                </button>
+                {(["day", "week", "month"] as ViewMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    aria-pressed={view === mode}
+                    onClick={() => setView(mode)}
+                    className={cn(
+                      "rounded-md px-3 py-1.5 text-sm font-medium capitalize transition-colors",
+                      view === mode ? "bg-brand-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100",
+                    )}
+                  >
+                    {mode}
+                  </button>
+                ))}
               </div>
-              <Button onClick={() => openCreateForm(referenceDate)}>+ New event</Button>
+              <Button variant="outline" onClick={() => openCreateForm(referenceDate)}>
+                + New post
+              </Button>
+              <Button onClick={() => setShowAutogen(true)}>✧ Auto-generate calendar</Button>
             </div>
           ) : null
         }
       />
 
       {selectedBrand && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-1.5">
-            <Button variant="outline" size="sm" aria-label="Previous period" onClick={goPrevious}>
-              &larr;
-            </Button>
-            <Button variant="outline" size="sm" onClick={goToday}>
-              Today
-            </Button>
-            <Button variant="outline" size="sm" aria-label="Next period" onClick={goNext}>
-              &rarr;
-            </Button>
+        <>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5">
+              <Button variant="outline" size="sm" aria-label="Previous period" onClick={goPrevious}>
+                &larr;
+              </Button>
+              <Button variant="outline" size="sm" onClick={goToday}>
+                Today
+              </Button>
+              <Button variant="outline" size="sm" aria-label="Next period" onClick={goNext}>
+                &rarr;
+              </Button>
+            </div>
+            <span className="text-sm font-medium text-slate-600">{periodLabel}</span>
           </div>
-          <span className="text-sm font-medium text-slate-600">
-            {view === "month" ? formatMonthLabel(referenceDate) : formatWeekRangeLabel(referenceDate)}
-          </span>
-        </div>
+
+          {(platformCounts.size > 0 || statusCounts.size > 0) && (
+            <div className="mb-4 flex flex-wrap items-center gap-1.5">
+              {[...platformCounts.entries()].map(([platform, count]) => (
+                <button
+                  key={platform}
+                  type="button"
+                  aria-pressed={platformFilters.includes(platform)}
+                  onClick={() => togglePlatformFilter(platform)}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors",
+                    platformFilters.includes(platform)
+                      ? "border-brand-200 bg-brand-50 text-brand-700"
+                      : "border-line bg-white text-ink-600 hover:bg-canvas",
+                  )}
+                >
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={{ backgroundColor: primaryPlatformColor([platform]) }}
+                    aria-hidden="true"
+                  />
+                  {platformLabel(platform)}
+                  <span className="text-ink-300">{count}</span>
+                </button>
+              ))}
+              {CALENDAR_EVENT_STATUSES.filter((status) => statusCounts.has(status)).map((status) => (
+                <button
+                  key={status}
+                  type="button"
+                  aria-pressed={statusFilters.includes(status)}
+                  onClick={() => toggleStatusFilter(status)}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors",
+                    statusFilters.includes(status)
+                      ? "border-brand-200 bg-brand-50 text-brand-700"
+                      : "border-line bg-white text-ink-600 hover:bg-canvas",
+                  )}
+                >
+                  {STATUS_LABELS[status]}
+                  <span className="text-ink-300">{statusCounts.get(status)}</span>
+                </button>
+              ))}
+              {(platformFilters.length > 0 || statusFilters.length > 0) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPlatformFilters([]);
+                    setStatusFilters([]);
+                  }}
+                  className="text-xs font-semibold text-ink-400 underline-offset-2 hover:underline"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+          )}
+        </>
       )}
 
       {error && (
         <p role="alert" className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
           {error}
+        </p>
+      )}
+
+      {notice && (
+        <p role="status" className="mb-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700">
+          {notice}
         </p>
       )}
 
@@ -209,17 +362,25 @@ export default function CalendarPage() {
       ) : view === "month" ? (
         <MonthView
           referenceDate={referenceDate}
-          events={events}
+          events={filteredEvents}
           today={today}
-          onSelectEvent={openEditForm}
+          onSelectEvent={setPreviewEvent}
+          onAddEvent={openCreateForm}
+        />
+      ) : view === "week" ? (
+        <WeekView
+          referenceDate={referenceDate}
+          events={filteredEvents}
+          today={today}
+          onSelectEvent={setPreviewEvent}
           onAddEvent={openCreateForm}
         />
       ) : (
-        <WeekView
+        <DayView
           referenceDate={referenceDate}
-          events={events}
+          events={filteredEvents}
           today={today}
-          onSelectEvent={openEditForm}
+          onSelectEvent={setPreviewEvent}
           onAddEvent={openCreateForm}
         />
       )}
@@ -234,6 +395,19 @@ export default function CalendarPage() {
           onDelete={handleDelete}
         />
       )}
+
+      {previewEvent && token && selectedBrandId && (
+        <PostPreviewModal
+          event={previewEvent}
+          token={token}
+          brandId={selectedBrandId}
+          brandName={selectedBrand?.name ?? "Brand"}
+          onClose={() => setPreviewEvent(null)}
+          onEdit={openEditForm}
+        />
+      )}
+
+      {showAutogen && <AutogenModal onClose={() => setShowAutogen(false)} onGenerate={handleAutogenerate} />}
     </div>
   );
 }

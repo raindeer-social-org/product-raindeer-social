@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { DayView } from "@/app/calendar/day-view";
 import { MonthView } from "@/app/calendar/month-view";
 import { WeekView } from "@/app/calendar/week-view";
 import type { CalendarEvent } from "@/lib/api";
@@ -116,5 +117,47 @@ describe("WeekView", () => {
     );
 
     expect(screen.getAllByText("No events")).toHaveLength(7);
+  });
+});
+
+describe("DayView", () => {
+  it("renders only events on the reference day and invokes onSelectEvent/onAddEvent", async () => {
+    const referenceDate = new Date(2026, 7, 10);
+    const events = [
+      makeEvent({ id: "e1", title: "Same Day Post", target_datetime: "2026-08-10T09:00:00" }),
+      makeEvent({ id: "e2", title: "Other Day Post", target_datetime: "2026-08-11T09:00:00" }),
+    ];
+    const onSelectEvent = vi.fn();
+    const onAddEvent = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <DayView
+        referenceDate={referenceDate}
+        events={events}
+        today={referenceDate}
+        onSelectEvent={onSelectEvent}
+        onAddEvent={onAddEvent}
+      />
+    );
+
+    expect(screen.getByText("Same Day Post")).toBeInTheDocument();
+    expect(screen.queryByText("Other Day Post")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Same Day Post/ }));
+    expect(onSelectEvent).toHaveBeenCalledWith(events[0]);
+
+    await user.click(screen.getByRole("button", { name: "Add event on 2026-08-10" }));
+    expect(onAddEvent).toHaveBeenCalledWith(referenceDate);
+  });
+
+  it("shows an empty state when the day has no events", () => {
+    const referenceDate = new Date(2026, 7, 10);
+
+    render(
+      <DayView referenceDate={referenceDate} events={[]} today={referenceDate} onSelectEvent={() => {}} onAddEvent={() => {}} />
+    );
+
+    expect(screen.getByText("No events today")).toBeInTheDocument();
   });
 });

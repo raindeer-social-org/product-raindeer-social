@@ -3,6 +3,7 @@
 import type { CalendarEvent } from "@/lib/api";
 import { cn } from "@/components/ui/cn";
 import { dayKey, getWeekDays, isSameDay } from "./date-utils";
+import { primaryPlatformColor } from "./platform";
 import { StatusBadge } from "./status-badge";
 import { STATUS_ROW_CLASSES } from "./status";
 
@@ -72,6 +73,7 @@ export function WeekView({ referenceDate, events, today, onSelectEvent, onAddEve
                   <button
                     type="button"
                     onClick={() => onSelectEvent(event)}
+                    style={{ borderLeftColor: primaryPlatformColor(event.target_platforms), borderLeftWidth: 3 }}
                     className={cn(
                       "flex w-full flex-col gap-1 rounded-lg border px-2.5 py-2 text-left transition-colors",
                       STATUS_ROW_CLASSES[event.status],
