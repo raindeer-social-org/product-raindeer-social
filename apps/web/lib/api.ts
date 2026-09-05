@@ -356,6 +356,106 @@ export async function rescheduleReviewPost(
   return res.json();
 }
 
+// --- Content Arena (Issue #124) ---
+
+// Mirrors apps/api/models/agent_run.py::AgentType — only the eight
+// per-post pipeline stages can appear here (onboarding/weekly_report runs
+// never carry a post_id, so the arena endpoints below can never surface
+// them).
+export type AgentType =
+  | "research"
+  | "creative"
+  | "generation"
+  | "reviewer"
+  | "human_review"
+  | "scheduler"
+  | "publisher"
+  | "analytics_collector";
+
+// Mirrors apps/api/schemas/arena.py::ArenaAgentRunRead. `output` is
+// whatever structured dict that stage's node returned (e.g.
+// research_brief/creative_brief/generation_output/review_output) —
+// rendered defensively, never assumed to have every key. `input` is not
+// exposed: run_pipeline only ever writes {"post_id": ...} into it, never
+// a real prompt.
+export interface ArenaAgentRun {
+  id: string;
+  agent_type: AgentType;
+  output: Record<string, unknown> | null;
+  model: string | null;
+  tokens: number | null;
+  cost: number | null;
+  latency_ms: number | null;
+  created_at: string;
+}
+
+// Mirrors apps/api/schemas/arena.py::ArenaReviewFeedbackRead.
+export interface ArenaReviewFeedback {
+  id: string;
+  source: ReviewSource;
+  score: number;
+  verdict: ReviewVerdict;
+  comments: Record<string, unknown>;
+  created_at: string;
+}
+
+// Mirrors apps/api/schemas/arena.py::ArenaPostRead — a thin Post
+// projection, not the full row.
+export interface ArenaPost {
+  id: string;
+  calendar_event_id: string | null;
+  current_pipeline_stage: PipelineStage;
+  body_text: Record<string, string> | null;
+  media: { platform: string; format: string; url: string }[] | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Mirrors apps/api/schemas/arena.py::ArenaRunRead. `post` is null when the
+// calendar event hasn't been triggered into a Post yet (or the brand has
+// no posts at all, for fetchLatestArenaRun) — agent_runs/review_feedback
+// are always empty in that case too.
+export interface ArenaRun {
+  calendar_event_id: string | null;
+  post: ArenaPost | null;
+  agent_runs: ArenaAgentRun[];
+  review_feedback: ArenaReviewFeedback[];
+}
+
+// apps/api/routers/arena.py mounts these under /brands/{brand_id}/arena —
+// same brand-scoping convention as calendarEventsUrl/reviewQueueUrl above.
+function arenaUrl(brandId: string, suffix: string): string {
+  return `${API_URL}/brands/${brandId}/arena${suffix}`;
+}
+
+export async function fetchArenaRunForEvent(
+  token: string,
+  brandId: string,
+  eventId: string
+): Promise<ArenaRun> {
+  const res = await fetch(arenaUrl(brandId, `/by-event/${eventId}`), {
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function fetchLatestArenaRun(token: string, brandId: string): Promise<ArenaRun> {
+  const res = await fetch(arenaUrl(brandId, "/latest"), {
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
 // --- Social accounts (Issue #91) ---
 
 // Mirrors apps/api/models/social_account.py::SocialPlatform. "linkedin" is
