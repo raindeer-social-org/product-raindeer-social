@@ -850,3 +850,70 @@ export async function fetchPostAnalyticsTrend(
 
   return res.json();
 }
+
+// --- Brand settings (Issue #128) ---
+
+// Mirrors apps/api/schemas/brand_settings.py::BrandSettingsRead. One row
+// per brand, auto-provisioned with these defaults on first GET — see
+// apps/api/routers/brand_settings.py. Persistence-only today: nothing
+// downstream reads this table yet (see the model's docstring), so these
+// toggles are durable but not yet wired to the agent behavior they
+// describe.
+export interface BrandSettings {
+  id: string;
+  brand_id: string;
+  auto_approve_enabled: boolean;
+  auto_approve_threshold: number;
+  show_agent_reasoning: boolean;
+  email_review_digest_enabled: boolean;
+  auto_shift_posting_times: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// Mirrors apps/api/schemas/brand_settings.py::BrandSettingsUpdate — every
+// field optional, PATCH-style (only fields present are changed server-side).
+export interface BrandSettingsUpdateInput {
+  auto_approve_enabled?: boolean;
+  auto_approve_threshold?: number;
+  show_agent_reasoning?: boolean;
+  email_review_digest_enabled?: boolean;
+  auto_shift_posting_times?: boolean;
+}
+
+// apps/api/routers/brand_settings.py mounts these under
+// /brands/{brand_id}/settings — same brand-scoping convention as
+// calendarEventsUrl/reviewQueueUrl above.
+function brandSettingsUrl(brandId: string): string {
+  return `${API_URL}/brands/${brandId}/settings`;
+}
+
+export async function fetchBrandSettings(token: string, brandId: string): Promise<BrandSettings> {
+  const res = await fetch(brandSettingsUrl(brandId), {
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function updateBrandSettings(
+  token: string,
+  brandId: string,
+  payload: BrandSettingsUpdateInput
+): Promise<BrandSettings> {
+  const res = await fetch(brandSettingsUrl(brandId), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}

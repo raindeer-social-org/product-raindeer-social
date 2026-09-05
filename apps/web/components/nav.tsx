@@ -102,9 +102,8 @@ function IconSettings() {
 
 // Every route here already exists as a real page. Screens still landing
 // from the mockup migration (Arena, Research, Creative, Create Post,
-// Content AI, Settings) add their own nav entry in their own PR once the
-// page itself exists — keeps this list from linking to 404s in the
-// meantime.
+// Content AI) add their own nav entry in their own PR once the page
+// itself exists — keeps this list from linking to 404s in the meantime.
 const NAV_LINKS: { href: string; label: string; icon: () => ReactNode }[] = [
   { href: "/", label: "Dashboard", icon: IconDashboard },
   { href: "/calendar", label: "Calendar", icon: IconCalendar },
@@ -114,6 +113,7 @@ const NAV_LINKS: { href: string; label: string; icon: () => ReactNode }[] = [
   { href: "/social-accounts", label: "Connections", icon: IconSocial },
   { href: "/analytics", label: "Analytics", icon: IconAnalytics },
   { href: "/reports", label: "Reports", icon: IconReport },
+  { href: "/settings", label: "Settings", icon: IconSettings },
 ];
 
 export function Nav() {
