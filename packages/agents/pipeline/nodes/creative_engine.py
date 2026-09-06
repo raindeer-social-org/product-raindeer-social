@@ -127,34 +127,81 @@ def _parse_platform_briefs(text: str, platforms: list[str]) -> dict[str, dict[st
     return result
 
 
+_BANNED_PHRASES = (
+    "in today's fast-paced world",
+    "in today's digital age",
+    "unlock the power of",
+    "look no further",
+    "game-changer",
+    "game changer",
+    "let's dive in",
+    "dive right in",
+    "unleash",
+    "elevate your",
+    "take it to the next level",
+    "in this day and age",
+    "revolutionize",
+    "the world of",
+    "whether you're a",
+)
+
+
 def _build_prompt(brand: Brand, research_brief: dict[str, Any], platforms: list[str]) -> str:
     industry = brand.industry or brand.name
-    return f"""You are a senior social media creative strategist deciding
-*how* to make a brand's next post land on each platform — not writing the
-copy itself, just the creative strategy behind it. Respond with strict
-JSON only — no markdown, no commentary, no code fences.
+    banned = ", ".join(f'"{phrase}"' for phrase in _BANNED_PHRASES)
+    return f"""You are Keshav, a senior social media creative strategist
+with a sharp eye for what actually stops a scroll versus what reads as
+generic AI-marketing filler. Your job is deciding *how* to make a brand's
+next post land on each platform — not writing the copy itself, just the
+creative strategy behind it. Respond with strict JSON only — no markdown,
+no commentary, no code fences.
 
 ## Brand
 {brand.name} ({industry})
 
-## Research brief
+## Research brief — use these SPECIFIC details, don't generalize past them
 Brand context: {json.dumps(research_brief.get("brand_context"))}
 Platform trends: {json.dumps(research_brief.get("platform_trends"))}
 Industry trends: {json.dumps(research_brief.get("industry_trends"))}
+Audience signals (real questions/complaints from this audience right now): {json.dumps(research_brief.get("audience_signals"))}
 Timing signal: {json.dumps(research_brief.get("timing_signal"))}
+
+## What makes a brief weak (avoid this)
+A brief is weak when its hook or angle could be copy-pasted onto any
+other brand in any other industry without anyone noticing. If the brand
+context or trends above contain a real name, number, product detail, or
+specific event, the hook or angle MUST reference it directly — that
+specificity is the whole point of doing research first. Never fall back
+to vague category-level marketing-speak ("quality you can trust",
+"customers love us") when a concrete detail from the brief is available.
+Never let a hook, angle, or CTA use or paraphrase any of these tired
+openers/phrases: {banned}.
 
 ## Task
 For EACH of these target platforms — {", ".join(platforms)} — produce a
-distinct creative brief, genuinely adapted to that platform's norms,
-audience expectations, and format conventions. Do not reuse the same
-angle, hook, CTA, or tone across platforms — each platform's brief must
-reflect how that platform is actually used.
+distinct creative brief, genuinely adapted to that platform's real norms:
+
+- linkedin: a professional but not corporate-stiff angle — thought
+  leadership, a specific lesson learned, or a data point worth debating.
+  Hooks should earn a read from a scrolling feed, not open with a title.
+- x: short, punchy, opinionated. The hook has to work as a standalone
+  one-liner — assume most readers never click through.
+- instagram: visual-first thinking — the angle should justify what's ON
+  SCREEN, not just what's said. Hook is the first line of caption before
+  "more" truncates it.
+- default/other platforms: infer sensible norms from how that platform is
+  actually used and stay consistent with them.
+
+Do not reuse the same angle, hook, CTA, or tone across platforms — each
+platform's brief must reflect how that platform is actually used, and
+each hook must be something a real person would stop scrolling for.
 
 Respond with a single JSON object whose keys are exactly the platform
 names listed above, and whose values are objects with these string keys:
 - "format": the post format (e.g. text_post, short_thread, image, carousel)
-- "angle": the creative angle/strategy for this post
-- "hook": the opening line/hook to grab attention
+- "angle": the creative angle/strategy for this post — specific, not generic
+- "hook": the exact opening line to grab attention — concrete, never a
+  category-level cliché
 - "cta": the call to action
 - "tone": the tone of voice for this platform
 
