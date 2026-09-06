@@ -148,15 +148,13 @@ export default function BrandsPage() {
     }
   }
 
-  // /onboarding acts on whichever brand is selected in the BrandSwitcher,
-  // not a per-brand URL — re-interviewing brand X from its own card has to
-  // select it first so the onboarding page it lands on is actually X's.
-  //
-  // TODO(#123): once the dedicated Aarav interview flow lands, point this
-  // at that page instead of the general onboarding questionnaire.
+  // /onboarding/interview acts on whichever brand is selected in the
+  // BrandSwitcher, not a per-brand URL — re-interviewing brand X from its
+  // own card has to select it first so the interview it lands on is
+  // actually X's.
   function handleReinterview(brand: Brand) {
     setSelectedBrandId(brand.id);
-    router.push("/onboarding");
+    router.push("/onboarding/interview");
   }
 
   return (
