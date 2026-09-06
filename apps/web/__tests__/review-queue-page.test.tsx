@@ -13,6 +13,7 @@ const approveReviewPostMock = vi.fn();
 const rejectReviewPostMock = vi.fn();
 const editReviewPostMock = vi.fn();
 const rescheduleReviewPostMock = vi.fn();
+const regenerateReviewPostMock = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   fetchBrands: (...args: unknown[]) => fetchBrandsMock(...args),
@@ -21,6 +22,7 @@ vi.mock("@/lib/api", () => ({
   rejectReviewPost: (...args: unknown[]) => rejectReviewPostMock(...args),
   editReviewPost: (...args: unknown[]) => editReviewPostMock(...args),
   rescheduleReviewPost: (...args: unknown[]) => rescheduleReviewPostMock(...args),
+  regenerateReviewPost: (...args: unknown[]) => regenerateReviewPostMock(...args),
 }));
 
 const BRANDS = [
@@ -96,6 +98,7 @@ describe("ReviewQueuePage", () => {
     rejectReviewPostMock.mockReset();
     editReviewPostMock.mockReset();
     rescheduleReviewPostMock.mockReset();
+    regenerateReviewPostMock.mockReset();
 
     window.localStorage.clear();
     window.localStorage.setItem("raindeer.auth.token", "test-token");
@@ -232,5 +235,59 @@ describe("ReviewQueuePage", () => {
         expect.objectContaining({ target_datetime: expect.stringContaining("2026-09-05") })
       );
     });
+  });
+
+  it("regenerates a draft from Neer's feedback through the API", async () => {
+    fetchReviewQueueMock.mockResolvedValue([makePost()]);
+    regenerateReviewPostMock.mockResolvedValue(
+      makePost({ body_text: { linkedin: "A revised draft with a clear call to action." } })
+    );
+    const user = userEvent.setup();
+
+    renderPage();
+
+    await screen.findByText(/Check out our new widget line!/);
+    await act(async () => {
+      await user.click(screen.getByRole("button", { name: "Regenerate with Neer's feedback" }));
+    });
+
+    await waitFor(() => {
+      expect(regenerateReviewPostMock).toHaveBeenCalledWith("test-token", "brand-1", "post-1");
+    });
+    expect(await screen.findByText(/A revised draft with a clear call to action\./)).toBeInTheDocument();
+  });
+
+  it("hides posts with an approve verdict when filtering to Needs changes", async () => {
+    const needsChanges = makePost({ id: "post-1" });
+    const readyToApprove = makePost({
+      id: "post-2",
+      body_text: { linkedin: "A great, on-brand post." },
+      review_feedback: [
+        {
+          id: "feedback-ai-2",
+          post_id: "post-2",
+          source: "ai_reviewer",
+          score: 92,
+          verdict: "approve",
+          comments: {
+            platforms: { linkedin: { score: 92, verdict: "approve", issues: [], suggested_edits: "" } },
+            model: "openrouter/free",
+          },
+          created_at: "2026-08-20T10:05:00Z",
+        },
+      ],
+    });
+    fetchReviewQueueMock.mockResolvedValue([needsChanges, readyToApprove]);
+    const user = userEvent.setup();
+
+    renderPage();
+
+    expect(await screen.findByText(/Check out our new widget line!/)).toBeInTheDocument();
+    expect(screen.getByText(/A great, on-brand post\./)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^Needs changes/ }));
+
+    expect(screen.getByText(/Check out our new widget line!/)).toBeInTheDocument();
+    expect(screen.queryByText(/A great, on-brand post\./)).not.toBeInTheDocument();
   });
 });

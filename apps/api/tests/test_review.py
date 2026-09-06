@@ -24,6 +24,7 @@ from apps.api.models import (
     Organization,
     PipelineStage,
     Post,
+    PostVersion,
     ReviewFeedback,
     ReviewSource,
     ReviewVerdict,
@@ -311,6 +312,94 @@ def test_reschedule_without_calendar_event_is_400(db_session, thread_cleanup) ->
     )
 
     assert response.status_code == 400
+
+
+# --- regenerate -------------------------------------------------------------
+
+
+@uses_test_session
+def test_regenerate_uses_ai_review_feedback(db_session, thread_cleanup) -> None:
+    brand, user = _setup_brand(db_session)
+    post = _post_at_human_review(db_session, brand, thread_cleanup)
+    original_body_text = dict(post.body_text or {})
+    assert original_body_text, "pipeline fixture should have produced generated copy"
+
+    ai_review = (
+        db_session.query(ReviewFeedback)
+        .filter(ReviewFeedback.post_id == post.id, ReviewFeedback.source == ReviewSource.AI_REVIEWER)
+        .one()
+    )
+    assert "platforms" in ai_review.comments
+
+    response = client.post(
+        f"/brands/{brand.id}/review-queue/{post.id}/regenerate",
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body["body_text"].keys()) == set(original_body_text.keys())
+    assert body["current_pipeline_stage"] == "human_review"
+
+    db_session.refresh(post)
+    # No LLM provider is configured in tests (see generation_engine.py's
+    # degrade-on-failure contract), so regenerate_copy_with_feedback falls
+    # back to returning the original draft unchanged — proves the
+    # fallback path works end-to-end rather than blanking the draft.
+    assert post.body_text == original_body_text
+    assert post.current_pipeline_stage == PipelineStage.HUMAN_REVIEW
+
+    versions = (
+        db_session.query(PostVersion)
+        .filter(PostVersion.post_id == post.id)
+        .order_by(PostVersion.created_at)
+        .all()
+    )
+    assert versions[-1].body_text == original_body_text
+
+
+@uses_test_session
+def test_regenerate_without_ai_review_is_409(db_session, thread_cleanup) -> None:
+    brand, user = _setup_brand(db_session)
+    post = Post(brand_id=brand.id, body_text={"linkedin": "Draft."})
+    post.current_pipeline_stage = PipelineStage.HUMAN_REVIEW
+    db_session.add(post)
+    db_session.flush()
+
+    response = client.post(
+        f"/brands/{brand.id}/review-queue/{post.id}/regenerate",
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 409
+
+
+@uses_test_session
+def test_regenerate_a_post_not_at_human_review_is_409(db_session, thread_cleanup) -> None:
+    brand, user = _setup_brand(db_session)
+    post = Post(brand_id=brand.id)
+    db_session.add(post)
+    db_session.flush()
+
+    response = client.post(
+        f"/brands/{brand.id}/review-queue/{post.id}/regenerate",
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 409
+
+
+@uses_test_session
+def test_viewer_cannot_regenerate(db_session, thread_cleanup) -> None:
+    brand, viewer = _setup_brand(db_session, UserRole.VIEWER)
+    post = _post_at_human_review(db_session, brand, thread_cleanup)
+
+    response = client.post(
+        f"/brands/{brand.id}/review-queue/{post.id}/regenerate",
+        headers=_auth_headers(viewer),
+    )
+
+    assert response.status_code == 403
 
 
 # --- scoping / isolation ----------------------------------------------------

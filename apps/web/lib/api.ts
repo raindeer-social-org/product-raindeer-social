@@ -337,6 +337,23 @@ export async function editReviewPost(
   return res.json();
 }
 
+export async function regenerateReviewPost(
+  token: string,
+  brandId: string,
+  postId: string
+): Promise<ReviewQueuePost> {
+  const res = await fetch(reviewQueueUrl(brandId, `/${postId}/regenerate`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
 export async function rescheduleReviewPost(
   token: string,
   brandId: string,
