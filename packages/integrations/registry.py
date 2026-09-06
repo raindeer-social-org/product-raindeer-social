@@ -11,6 +11,8 @@ from packages.integrations.search.tavily import TavilyProvider
 from packages.integrations.social.base import SocialOAuthProvider, SocialPublisher
 from packages.integrations.social.linkedin_provider import LinkedInProvider
 from packages.integrations.social.x_provider import XProvider
+from packages.integrations.speech.base import SpeechToTextProvider
+from packages.integrations.speech.whisper_provider import WhisperSpeechProvider
 from packages.integrations.storage.base import StorageProvider
 from packages.integrations.storage.supabase_provider import SupabaseStorageProvider
 from packages.integrations.video_gen.base import VideoProvider
@@ -72,6 +74,10 @@ _IMAGE_PROVIDERS = {
 
 _VIDEO_PROVIDERS = {
     "runway": lambda settings: RunwayProvider(api_key=settings.runway_api_key or ""),
+}
+
+_SPEECH_PROVIDERS = {
+    "whisper": lambda settings: WhisperSpeechProvider(model_size=settings.whisper_model_size),
 }
 
 
@@ -174,5 +180,17 @@ def get_video_provider() -> VideoProvider:
         raise ValueError(
             f"Unknown VIDEO_PROVIDER '{settings.video_provider}'. "
             f"Valid options: {sorted(_VIDEO_PROVIDERS)}"
+        ) from None
+    return factory(settings)
+
+
+def get_speech_provider() -> SpeechToTextProvider:
+    settings = get_settings()
+    try:
+        factory = _SPEECH_PROVIDERS[settings.speech_provider]
+    except KeyError:
+        raise ValueError(
+            f"Unknown SPEECH_PROVIDER '{settings.speech_provider}'. "
+            f"Valid options: {sorted(_SPEECH_PROVIDERS)}"
         ) from None
     return factory(settings)

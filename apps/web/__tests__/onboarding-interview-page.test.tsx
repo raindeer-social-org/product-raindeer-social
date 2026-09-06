@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import OnboardingInterviewPage from "@/app/onboarding/interview/page";
 import { AuthProvider } from "@/lib/auth-context";
@@ -21,6 +21,9 @@ const completeOnboardingMock = vi.fn();
 const uploadBrandLogoMock = vi.fn();
 const fetchSocialAccountsMock = vi.fn();
 const connectLinkedInMock = vi.fn();
+const fetchOnboardingAssetsMock = vi.fn();
+const uploadOnboardingAssetMock = vi.fn();
+const transcribeOnboardingVoiceAnswerMock = vi.fn();
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
@@ -35,6 +38,9 @@ vi.mock("@/lib/api", async () => {
     uploadBrandLogo: (...args: unknown[]) => uploadBrandLogoMock(...args),
     fetchSocialAccounts: (...args: unknown[]) => fetchSocialAccountsMock(...args),
     connectLinkedIn: (...args: unknown[]) => connectLinkedInMock(...args),
+    fetchOnboardingAssets: (...args: unknown[]) => fetchOnboardingAssetsMock(...args),
+    uploadOnboardingAsset: (...args: unknown[]) => uploadOnboardingAssetMock(...args),
+    transcribeOnboardingVoiceAnswer: (...args: unknown[]) => transcribeOnboardingVoiceAnswerMock(...args),
   };
 });
 
@@ -77,6 +83,9 @@ describe("OnboardingInterviewPage", () => {
     uploadBrandLogoMock.mockReset();
     fetchSocialAccountsMock.mockReset();
     connectLinkedInMock.mockReset();
+    fetchOnboardingAssetsMock.mockReset();
+    uploadOnboardingAssetMock.mockReset();
+    transcribeOnboardingVoiceAnswerMock.mockReset();
 
     window.localStorage.clear();
     window.localStorage.setItem("raindeer.auth.token", "test-token");
@@ -87,6 +96,7 @@ describe("OnboardingInterviewPage", () => {
     updateBrandMock.mockResolvedValue(BRAND);
     upsertOnboardingMock.mockResolvedValue({});
     completeOnboardingMock.mockResolvedValue({});
+    fetchOnboardingAssetsMock.mockResolvedValue([]);
 
     streamOnboardingResearchMock.mockImplementation(
       async (
@@ -169,6 +179,9 @@ describe("OnboardingInterviewPage", () => {
       "Tell us about your audience, in your own words",
       "What do you sell, and who's it for?",
       "Who are your top competitors?",
+      "What's your brand's mission, in one line?",
+      "Anything your content should never say or show?",
+      "How often do you want to post?",
       "Drop in anything that shows your brand at its best",
     ];
 
@@ -180,5 +193,99 @@ describe("OnboardingInterviewPage", () => {
     expect(await screen.findByText("Connect where you publish")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Enter Raindeer" }));
     expect(push).toHaveBeenCalledWith("/");
+  });
+
+  async function skipTo(user: ReturnType<typeof userEvent.setup>, title: string) {
+    for (;;) {
+      const current = await screen.findByRole("heading", { level: 2 });
+      if (current.textContent === title) return;
+      await user.click(screen.getByText("Skip"));
+    }
+  }
+
+  it("saves mission via upsertOnboarding", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await skipTo(user, "What's your brand's mission, in one line?");
+    await user.type(screen.getByPlaceholderText(/Make professional-grade tools/), "Make widgets everyone loves.");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() => {
+      expect(upsertOnboardingMock).toHaveBeenCalledWith("test-token", "brand-1", {
+        mission: "Make widgets everyone loves.",
+      });
+    });
+  });
+
+  it("saves content dos/don'ts as a split list via upsertOnboarding", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await skipTo(user, "Anything your content should never say or show?");
+    await user.type(screen.getByPlaceholderText(/Never joke about pricing/), "No pricing jokes, no memes");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() => {
+      expect(upsertOnboardingMock).toHaveBeenCalledWith("test-token", "brand-1", {
+        content_dos_donts: ["No pricing jokes", "no memes"],
+      });
+    });
+  });
+
+  it("saves a single selected posting cadence via upsertOnboarding", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await skipTo(user, "How often do you want to post?");
+    await user.click(screen.getByRole("button", { name: "Weekly" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() => {
+      expect(upsertOnboardingMock).toHaveBeenCalledWith("test-token", "brand-1", { posting_cadence: "Weekly" });
+    });
+  });
+
+  it("falls back to the text answer when the mic can't be used (no MediaRecorder in this environment)", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await skipTo(user, "Tell us about your audience, in your own words");
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+
+    // jsdom has no MediaRecorder — startRecording must degrade to the
+    // typed fallback rather than leaving the question unanswerable.
+    const textarea = await screen.findByPlaceholderText("Type your answer — Aarav reads tone, not just words.");
+    await user.type(textarea, "Small business owners who hate spreadsheets.");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() => {
+      expect(upsertOnboardingMock).toHaveBeenCalledWith("test-token", "brand-1", {
+        audience: "Small business owners who hate spreadsheets.",
+      });
+    });
+  });
+
+  it("uploads a real asset file and shows it as filled instead of a blank slot", async () => {
+    const user = userEvent.setup();
+    uploadOnboardingAssetMock.mockResolvedValue({
+      id: "asset-1",
+      brand_id: "brand-1",
+      slot: "style_guide",
+      url: "https://storage.test/style-guide.pdf",
+      filename: "style-guide.pdf",
+      content_type: "application/pdf",
+      created_at: "2026-01-01",
+    });
+    renderPage();
+
+    await skipTo(user, "Drop in anything that shows your brand at its best");
+    const file = new File(["guide"], "style-guide.pdf", { type: "application/pdf" });
+    await act(async () => {
+      await user.upload(screen.getByLabelText("Upload Style guide"), file);
+    });
+
+    await waitFor(() => expect(uploadOnboardingAssetMock).toHaveBeenCalledWith("test-token", "brand-1", "style_guide", file));
+    expect(await screen.findByText("style-guide.pdf")).toBeInTheDocument();
   });
 });
