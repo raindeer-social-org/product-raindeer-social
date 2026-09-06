@@ -50,9 +50,25 @@ def test_get_social_oauth_provider_resolves_linkedin() -> None:
     assert isinstance(get_social_oauth_provider("linkedin"), LinkedInProvider)
 
 
+def test_get_social_oauth_provider_resolves_new_platforms() -> None:
+    from packages.integrations.social.facebook_provider import FacebookProvider
+    from packages.integrations.social.instagram_provider import InstagramProvider
+    from packages.integrations.social.pinterest_provider import PinterestProvider
+    from packages.integrations.social.threads_provider import ThreadsProvider
+    from packages.integrations.social.tiktok_provider import TikTokProvider
+    from packages.integrations.social.youtube_provider import YouTubeProvider
+
+    assert isinstance(get_social_oauth_provider("facebook"), FacebookProvider)
+    assert isinstance(get_social_oauth_provider("instagram"), InstagramProvider)
+    assert isinstance(get_social_oauth_provider("threads"), ThreadsProvider)
+    assert isinstance(get_social_oauth_provider("youtube"), YouTubeProvider)
+    assert isinstance(get_social_oauth_provider("tiktok"), TikTokProvider)
+    assert isinstance(get_social_oauth_provider("pinterest"), PinterestProvider)
+
+
 def test_unknown_social_platform_raises() -> None:
     with pytest.raises(ValueError, match="Unknown social platform"):
-        get_social_oauth_provider("tiktok")
+        get_social_oauth_provider("snapchat")
 
 
 def test_get_embedding_provider_defaults_to_openai() -> None:

@@ -11,6 +11,12 @@ import type { SocialAccount } from "@/lib/api";
 const fetchBrandsMock = vi.fn();
 const fetchSocialAccountsMock = vi.fn();
 const connectLinkedInMock = vi.fn();
+const connectInstagramMock = vi.fn();
+const connectThreadsMock = vi.fn();
+const connectFacebookMock = vi.fn();
+const connectYouTubeMock = vi.fn();
+const connectTikTokMock = vi.fn();
+const connectPinterestMock = vi.fn();
 const disconnectSocialAccountMock = vi.fn();
 
 vi.mock("@/lib/api", async () => {
@@ -20,6 +26,12 @@ vi.mock("@/lib/api", async () => {
     fetchBrands: (...args: unknown[]) => fetchBrandsMock(...args),
     fetchSocialAccounts: (...args: unknown[]) => fetchSocialAccountsMock(...args),
     connectLinkedIn: (...args: unknown[]) => connectLinkedInMock(...args),
+    connectInstagram: (...args: unknown[]) => connectInstagramMock(...args),
+    connectThreads: (...args: unknown[]) => connectThreadsMock(...args),
+    connectFacebook: (...args: unknown[]) => connectFacebookMock(...args),
+    connectYouTube: (...args: unknown[]) => connectYouTubeMock(...args),
+    connectTikTok: (...args: unknown[]) => connectTikTokMock(...args),
+    connectPinterest: (...args: unknown[]) => connectPinterestMock(...args),
     disconnectSocialAccount: (...args: unknown[]) => disconnectSocialAccountMock(...args),
   };
 });
@@ -78,6 +90,12 @@ describe("SocialAccountsPage", () => {
     fetchBrandsMock.mockReset();
     fetchSocialAccountsMock.mockReset();
     connectLinkedInMock.mockReset();
+    connectInstagramMock.mockReset();
+    connectThreadsMock.mockReset();
+    connectFacebookMock.mockReset();
+    connectYouTubeMock.mockReset();
+    connectTikTokMock.mockReset();
+    connectPinterestMock.mockReset();
     disconnectSocialAccountMock.mockReset();
     redirectToAuthorizeUrlMock.mockReset();
 
@@ -109,7 +127,44 @@ describe("SocialAccountsPage", () => {
   it("shows an empty state when nothing is connected for the brand", async () => {
     renderPage();
 
+    // Wait for the actual fetch chain (AuthProvider -> BrandProvider ->
+    // this page's own fetchSocialAccounts) to settle before asserting —
+    // see the identical fix in onboarding-page.test.tsx for why a bare
+    // findByText can occasionally race a still-loading intermediate render.
+    await waitFor(() => expect(fetchSocialAccountsMock).toHaveBeenCalled());
     expect(await screen.findByText("No accounts connected")).toBeInTheDocument();
+  });
+
+  it("starts the YouTube OAuth flow and redirects to the authorize URL on success", async () => {
+    connectYouTubeMock.mockResolvedValue({
+      authorize_url: "https://accounts.google.com/o/oauth2/v2/auth?foo=bar",
+    });
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(fetchSocialAccountsMock).toHaveBeenCalled());
+
+    await user.click(screen.getByRole("button", { name: "Connect YouTube" }));
+
+    await waitFor(() => {
+      expect(connectYouTubeMock).toHaveBeenCalledWith("test-token", "brand-1");
+      expect(redirectToAuthorizeUrlMock).toHaveBeenCalledWith(
+        "https://accounts.google.com/o/oauth2/v2/auth?foo=bar"
+      );
+    });
+  });
+
+  it("shows a friendly message instead of a generic error when TikTok isn't configured", async () => {
+    connectTikTokMock.mockRejectedValue(new ApiError("Tiktok OAuth is not configured", 503));
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(fetchSocialAccountsMock).toHaveBeenCalled());
+
+    await user.click(screen.getByRole("button", { name: "Connect TikTok" }));
+
+    expect(await screen.findByText("TikTok isn't configured on this server yet.")).toBeInTheDocument();
+    expect(redirectToAuthorizeUrlMock).not.toHaveBeenCalled();
   });
 
   it("starts the LinkedIn OAuth flow and redirects to the authorize URL on success", async () => {
