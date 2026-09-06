@@ -116,6 +116,19 @@ const config: Config = {
         "rd-aurora": { "0%": { transform: "rotate(0deg) scale(1.4)" }, "100%": { transform: "rotate(360deg) scale(1.4)" } },
         "rd-wave": { "0%,100%": { transform: "scaleY(.35)" }, "50%": { transform: "scaleY(1)" } },
         "rd-rise": { from: { opacity: "0", transform: "translateY(6px)" }, to: { opacity: "1", transform: "none" } },
+        // --- Content Arena visual-polish additions (Issue #139) ---
+        "rd-node-in": {
+          from: { opacity: "0", transform: "translateY(8px) scale(.96)" },
+          to: { opacity: "1", transform: "none" },
+        },
+        "rd-arena-glow": {
+          "0%,100%": { boxShadow: "0 0 16px -6px var(--arena-glow, rgba(255,196,107,.75))" },
+          "50%": { boxShadow: "0 0 34px -2px var(--arena-glow, rgba(255,196,107,.95))" },
+        },
+        "rd-bg-drift": {
+          "0%,100%": { backgroundPosition: "0% 0%, 0px 0px" },
+          "50%": { backgroundPosition: "100% 100%, 26px 26px" },
+        },
       },
       animation: {
         "fade-in": "fade-in 0.15s ease-out",
@@ -127,6 +140,9 @@ const config: Config = {
         "rd-aurora": "rd-aurora 7s linear infinite",
         "rd-wave": "rd-wave 1.1s ease-in-out infinite",
         "rd-rise": "rd-rise 0.4s ease both",
+        "rd-node-in": "rd-node-in 0.42s cubic-bezier(.2,.8,.3,1) both",
+        "rd-arena-glow": "rd-arena-glow 2.2s ease-in-out infinite",
+        "rd-bg-drift": "rd-bg-drift 18s ease-in-out infinite alternate",
       },
     },
   },

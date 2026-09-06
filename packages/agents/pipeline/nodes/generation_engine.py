@@ -302,23 +302,90 @@ def _fallback_copy_for(platform_brief: dict[str, Any], platform: str) -> str:
     return f"[Generation Engine fallback] Unable to generate copy for {platform}."
 
 
+# Copy that leans on these reads as AI-generated filler, not something a
+# person on the brand's social team actually wrote — banned outright.
+_BANNED_PHRASES = (
+    "in today's fast-paced world",
+    "in today's digital age",
+    "unlock the power of",
+    "look no further",
+    "game-changer",
+    "game changer",
+    "let's dive in",
+    "dive right in",
+    "unleash",
+    "elevate your",
+    "take it to the next level",
+    "revolutionize",
+    "buckle up",
+    "the world of",
+    "whether you're a",
+    "at the end of the day",
+)
+
+_PLATFORM_FORMAT_RULES = {
+    "linkedin": (
+        "LinkedIn: written like a real professional post, not a press "
+        "release. Short paragraphs (1-3 sentences), line breaks between "
+        "them for scannability. At most 0-3 hashtags at the very end, "
+        "never a wall of hashtags, never hashtags mid-sentence."
+    ),
+    "x": (
+        "X: tight and punchy, under ~280 characters unless the brief "
+        "explicitly calls for a thread. No hashtag walls — 0-1 hashtag "
+        "only if it's genuinely load-bearing. Every word has to earn its "
+        "place."
+    ),
+    "instagram": (
+        "Instagram: caption supports the visual, doesn't duplicate it. "
+        "Hook is the first line — it's the only part visible before "
+        "'more' truncates the rest. Hashtags are fine (5-15), grouped at "
+        "the end, relevant rather than generic (#love #instagood banned)."
+    ),
+}
+_DEFAULT_FORMAT_RULE = (
+    "Match this platform's real norms for length, formatting, and "
+    "hashtag/emoji use as implied by its brief."
+)
+
+
 def _build_prompt(platform_briefs: dict[str, dict[str, str]], platforms: list[str]) -> str:
     briefs_json = json.dumps({platform: platform_briefs.get(platform, {}) for platform in platforms})
-    return f"""You are a senior social media copywriter turning an
+    banned = ", ".join(f'"{phrase}"' for phrase in _BANNED_PHRASES)
+    format_rules = "\n".join(
+        f"- {platform}: {_PLATFORM_FORMAT_RULES.get(platform, _DEFAULT_FORMAT_RULE)}"
+        for platform in platforms
+    )
+    return f"""You are Kavi, a senior social media copywriter turning an
 already-approved creative brief into the final, publish-ready post copy —
-the actual words that will be posted, not more strategy. Respond with
-strict JSON only — no markdown, no commentary, no code fences.
+the actual words that will be posted, not more strategy. You write the
+way a genuinely good social media manager writes: specific, confident,
+a little opinionated, never generic. Respond with strict JSON only — no
+markdown, no commentary, no code fences.
 
 ## Creative briefs per platform
 {briefs_json}
+
+## Absolutely do not use these phrases or their close paraphrases
+{banned}. Also avoid: stacking 3+ emoji in a row, ending every sentence
+with an exclamation point, and asking a rhetorical question just to fill
+space ("Ever wonder why...?") unless the brief's hook actually calls for
+one.
+
+## Platform-native formatting — this is not optional
+{format_rules}
 
 ## Task
 For EACH of these target platforms — {", ".join(platforms)} — write the
 final post copy that follows that platform's brief (format, angle, hook,
 cta, tone) exactly: open with (or clearly incorporate) that platform's
-hook, end with (or clearly incorporate) its CTA, and match its tone. Each
-platform's copy must be genuinely distinct — reflecting that platform's
-own brief — not the same text reused across platforms.
+hook in the very first line — that's the only part of the post many
+readers will ever see — end with (or clearly incorporate) its CTA, and
+match its tone throughout, not just in the opening line. Write it like a
+specific, real post about this specific brand and angle, not a
+fill-in-the-blank template. Each platform's copy must be genuinely
+distinct in wording and structure — reflecting that platform's own brief
+— never the same text lightly reworded across platforms.
 
 Respond with a single JSON object whose keys are exactly the platform
 names listed above, and whose values are the final copy text (a plain

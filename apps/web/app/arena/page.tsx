@@ -30,6 +30,23 @@ const POLL_INTERVAL_MS = 15000;
 
 const TERMINAL_STAGES = new Set(["completed", "rejected", "failed"]);
 
+/** Content Arena's edge-flow particles and background drift are cosmetic
+ * only (Issue #139) — this lets both bail out cleanly for anyone with
+ * `prefers-reduced-motion` set, same convention as the global CSS rule in
+ * app/globals.css that shortens every CSS animation/transition to
+ * effectively-instant for that preference. */
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setReduced(query.matches);
+    const onChange = () => setReduced(query.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  return reduced;
+}
+
 export default function ArenaPage() {
   return (
     <Suspense fallback={<div className="min-h-screen bg-arenadark-bg" />}>
@@ -53,6 +70,7 @@ function ArenaScreen() {
   // render-only, per Issue #124's scope (no real playback/streaming).
   const [isPlaying, setIsPlaying] = useState(true);
   const [now, setNow] = useState(() => new Date());
+  const reducedMotion = usePrefersReducedMotion();
 
   const load = useCallback(
     async (showSpinner: boolean) => {
@@ -236,12 +254,13 @@ function ArenaScreen() {
                 </div>
               ) : (
                 <div
-                  className="relative"
+                  className={reducedMotion ? "relative" : "relative animate-rd-bg-drift"}
                   style={{
                     width: CANVAS_WIDTH,
                     height: CANVAS_HEIGHT,
-                    backgroundImage: "radial-gradient(#18213F 1.1px, transparent 1.1px)",
-                    backgroundSize: "26px 26px",
+                    backgroundImage:
+                      "radial-gradient(circle at 30% 20%, rgba(61,107,255,.09), transparent 55%), radial-gradient(#18213F 1.1px, transparent 1.1px)",
+                    backgroundSize: "auto, 26px 26px",
                   }}
                 >
                   {LANES.map((lane) => (
@@ -263,6 +282,7 @@ function ArenaScreen() {
                     {edgeElements.map((edge) => (
                       <path
                         key={edge.key}
+                        id={`arena-edge-${edge.key}`}
                         d={edge.d}
                         fill="none"
                         stroke={edge.stroke}
@@ -271,12 +291,27 @@ function ArenaScreen() {
                         className="animate-rd-dash"
                       />
                     ))}
+                    {/* A small dot traveling each edge, suggesting live
+                        data flowing through the pipeline — purely
+                        decorative (Issue #124 stays static/lightly-
+                        interactive; nothing here reflects real progress),
+                        so it's skipped entirely under
+                        prefers-reduced-motion. */}
+                    {!reducedMotion &&
+                      edgeElements.map((edge) => (
+                        <circle key={`${edge.key}-particle`} r={2.5} fill={edge.stroke}>
+                          <animateMotion dur="1.8s" repeatCount="indefinite">
+                            <mpath href={`#arena-edge-${edge.key}`} />
+                          </animateMotion>
+                        </circle>
+                      ))}
                   </svg>
 
-                  {nodes.map((node) => (
+                  {nodes.map((node, index) => (
                     <NodeCard
                       key={node.id}
                       node={node}
+                      index={index}
                       isSelected={node.id === selectedNodeId}
                       onSelect={(id) => setSelectedNodeId(id as ArenaNodeId)}
                     />

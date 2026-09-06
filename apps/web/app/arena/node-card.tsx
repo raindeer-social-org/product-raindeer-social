@@ -7,10 +7,16 @@ export function NodeCard({
   node,
   isSelected,
   onSelect,
+  index = 0,
 }: {
   node: ArenaNodeView;
   isSelected: boolean;
   onSelect: (id: string) => void;
+  /** Render order among the currently-visible nodes — used only to stagger
+   * each card's entrance animation so the arena doesn't pop in all at
+   * once (Issue #139's "richer entrance animation" pass). Purely
+   * cosmetic, has no effect on layout/topology. */
+  index?: number;
 }) {
   const statusStyle = STATUS_STYLES[node.status];
   const isLive = node.status === "WAITING";
@@ -26,11 +32,21 @@ export function NodeCard({
         top: node.y,
         width: node.w,
         borderColor: isSelected ? "#3D6BFF" : node.status === "WAITING" ? "#7A5A1E" : "#1D2743",
-        boxShadow: isSelected
-          ? "0 0 0 3px rgba(61,107,255,.18)"
-          : isLive
-            ? "0 0 26px -8px rgba(43,109,255,.7)"
-            : "none",
+        boxShadow: isSelected ? "0 0 0 3px rgba(61,107,255,.18)" : undefined,
+        // Both animations are driven from one shorthand (rather than two
+        // Tailwind `animate-*` utility classes, which would silently
+        // override each other since each sets the whole `animation`
+        // property) so the entrance stagger and the live glow pulse run
+        // at once. The keyframes themselves still come from
+        // tailwind.config.ts's rd-node-in/rd-arena-glow definitions.
+        animation: isLive
+          ? `rd-node-in 0.42s cubic-bezier(.2,.8,.3,1) both, rd-arena-glow 2.2s ease-in-out infinite`
+          : `rd-node-in 0.42s cubic-bezier(.2,.8,.3,1) both`,
+        animationDelay: isLive ? `${index * 55}ms, ${index * 55}ms` : `${index * 55}ms`,
+        // Consumed by the rd-arena-glow keyframe so the pulsing glow
+        // color matches this node's own agent color instead of one
+        // hardcoded hue for every live node.
+        ["--arena-glow" as string]: isLive ? `${node.color}B3` : undefined,
       }}
       className="absolute flex cursor-pointer flex-col overflow-hidden rounded-[13px] border-[1.5px] bg-arenadark-panel2 text-left"
     >
