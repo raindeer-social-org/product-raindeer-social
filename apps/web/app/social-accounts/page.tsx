@@ -3,7 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ApiError,
+  connectFacebook,
+  connectInstagram,
   connectLinkedIn,
+  connectPinterest,
+  connectThreads,
+  connectTikTok,
+  connectYouTube,
   disconnectSocialAccount,
   fetchSocialAccounts,
   type AuthorizeUrlResponse,
@@ -28,22 +34,44 @@ import { redirectToAuthorizeUrl } from "./redirect";
 // platform still renders instead of breaking.
 const PLATFORM_LABELS: Partial<Record<SocialPlatform, string>> = {
   linkedin: "LinkedIn",
+  instagram: "Instagram",
+  threads: "Threads",
+  facebook: "Facebook",
+  youtube: "YouTube",
+  tiktok: "TikTok",
+  pinterest: "Pinterest",
 };
 
 function platformLabel(platform: SocialPlatform): string {
   return PLATFORM_LABELS[platform] ?? platform;
 }
 
-// Platforms the UI can start a connect flow for. LinkedIn is genuinely the
-// only connectable platform today, but this is a list plus a lookup table
-// (not a single hardcoded button/handler) so a second provider is a data
-// change here rather than a rewrite of this page.
-const CONNECTABLE_PLATFORMS: SocialPlatform[] = ["linkedin"];
+// Platforms the UI can start a connect flow for — a list plus a lookup
+// table (not a hardcoded button/handler per platform) so adding another
+// provider is a data change here rather than a rewrite of this page.
+// Every platform below (Issue #138) is independently connectable; whether
+// it actually works depends on the corresponding *_REDIRECT_URI env var
+// being configured server-side (unconfigured ones 503, handled below).
+const CONNECTABLE_PLATFORMS: SocialPlatform[] = [
+  "linkedin",
+  "instagram",
+  "threads",
+  "facebook",
+  "youtube",
+  "tiktok",
+  "pinterest",
+];
 
 const CONNECT_HANDLERS: Partial<
   Record<SocialPlatform, (token: string, brandId: string) => Promise<AuthorizeUrlResponse>>
 > = {
   linkedin: connectLinkedIn,
+  instagram: connectInstagram,
+  threads: connectThreads,
+  facebook: connectFacebook,
+  youtube: connectYouTube,
+  tiktok: connectTikTok,
+  pinterest: connectPinterest,
 };
 
 const STATUS_TONE: Record<SocialAccountStatus, BadgeTone> = {

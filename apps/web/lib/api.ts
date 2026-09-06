@@ -358,10 +358,15 @@ export async function rescheduleReviewPost(
 
 // --- Social accounts (Issue #91) ---
 
-// Mirrors apps/api/models/social_account.py::SocialPlatform. "linkedin" is
-// the only value today, but this is kept as a string union (not a literal)
-// so the UI layer can stay written generically as more providers land.
-export type SocialPlatform = "linkedin";
+// Mirrors apps/api/models/social_account.py::SocialPlatform.
+export type SocialPlatform =
+  | "linkedin"
+  | "instagram"
+  | "threads"
+  | "facebook"
+  | "youtube"
+  | "tiktok"
+  | "pinterest";
 
 // Mirrors apps/api/models/social_account.py::SocialAccountStatus.
 export type SocialAccountStatus = "active" | "expired" | "revoked";
@@ -410,7 +415,19 @@ export async function fetchSocialAccounts(token: string, brandId: string): Promi
 // separates "give me a URL" (POST .../linkedin/connect) from the redirect
 // the browser does with it.
 export async function connectLinkedIn(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
-  const res = await fetch(socialAccountsUrl(brandId, "/linkedin/connect"), {
+  return connectPlatform(token, brandId, "linkedin");
+}
+
+// Same "give me a URL, don't navigate yourself" shape as connectLinkedIn
+// above, generalized by platform (Issue #138) since every platform's
+// /connect endpoint (apps/api/routers/social_accounts.py) is wired
+// identically — one function instead of one per platform.
+export async function connectPlatform(
+  token: string,
+  brandId: string,
+  platform: SocialPlatform
+): Promise<AuthorizeUrlResponse> {
+  const res = await fetch(socialAccountsUrl(brandId, `/${platform}/connect`), {
     method: "POST",
     headers: authHeaders(token),
   });
@@ -420,6 +437,30 @@ export async function connectLinkedIn(token: string, brandId: string): Promise<A
   }
 
   return res.json();
+}
+
+export async function connectInstagram(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  return connectPlatform(token, brandId, "instagram");
+}
+
+export async function connectThreads(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  return connectPlatform(token, brandId, "threads");
+}
+
+export async function connectFacebook(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  return connectPlatform(token, brandId, "facebook");
+}
+
+export async function connectYouTube(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  return connectPlatform(token, brandId, "youtube");
+}
+
+export async function connectTikTok(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  return connectPlatform(token, brandId, "tiktok");
+}
+
+export async function connectPinterest(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  return connectPlatform(token, brandId, "pinterest");
 }
 
 export async function disconnectSocialAccount(
