@@ -38,6 +38,11 @@ const TERMINAL_STAGES = new Set(["completed", "rejected", "failed"]);
 function usePrefersReducedMotion(): boolean {
   const [reduced, setReduced] = useState(false);
   useEffect(() => {
+    // jsdom (this repo's test environment) doesn't implement matchMedia —
+    // degrade to "motion allowed" rather than throwing, same
+    // fail-soft-on-an-unavailable-browser-API spirit as the rest of this
+    // codebase's provider/integration guards.
+    if (typeof window.matchMedia !== "function") return;
     const query = window.matchMedia("(prefers-reduced-motion: reduce)");
     setReduced(query.matches);
     const onChange = () => setReduced(query.matches);
