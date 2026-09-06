@@ -34,6 +34,10 @@ reportlab==5.0.1
 
 openai==1.109.1
 
+# Free, fully open-source, locally-run speech-to-text for Aarav's
+# onboarding voice answers (Issue #144) — no API key, no per-call cost.
+faster-whisper==1.1.1
+
 pytest==8.3.4
 pytest-cov==6.0.0
 httpx==0.28.1
