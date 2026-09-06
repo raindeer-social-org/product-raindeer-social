@@ -20,6 +20,10 @@ forward:
                  target_datetime (Issue #26/#27) — reused as-is rather
                  than adding a second scheduling field to Post — again
                  without touching the graph.
+  * regenerate — Issue #140: asks Generation Engine to revise the draft
+                 using the latest AI review's per-platform issues/
+                 suggested_edits, appending a PostVersion the same way
+                 edit does, again without touching the graph.
 
 Approve and reject both append a ReviewFeedback row (Issue #24's table)
 with source=human, sitting alongside the Reviewer Engine's own
@@ -58,6 +62,7 @@ from apps.api.schemas.review import (
 )
 from packages.agents.pipeline.checkpointer import get_postgres_checkpointer
 from packages.agents.pipeline.graph import run_pipeline
+from packages.agents.pipeline.nodes.generation_engine import regenerate_copy_with_feedback
 
 router = APIRouter(prefix="/brands/{brand_id}/review-queue", tags=["review"])
 
@@ -96,6 +101,21 @@ def _require_paused_at_human_review(post: Post) -> None:
                 f"(current stage: {post.current_pipeline_stage.value})"
             ),
         )
+
+
+def _latest_ai_review_or_409(db: Session, post: Post) -> ReviewFeedback:
+    feedback = (
+        db.query(ReviewFeedback)
+        .filter(ReviewFeedback.post_id == post.id, ReviewFeedback.source == ReviewSource.AI_REVIEWER)
+        .order_by(ReviewFeedback.created_at.desc())
+        .first()
+    )
+    if feedback is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Post has no AI review yet — nothing to regenerate from",
+        )
+    return feedback
 
 
 def _feedback_by_post(db: Session, post_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[ReviewFeedback]]:
@@ -243,6 +263,40 @@ def edit_post(
 
     post.body_text = payload.body_text
     db.add(PostVersion(post_id=post.id, body_text=payload.body_text))
+    db.flush()
+    db.refresh(post)
+
+    return _post_response(db, post)
+
+
+@router.post("/{post_id}/regenerate", response_model=ReviewQueuePostRead)
+def regenerate_post(
+    brand_id: uuid.UUID,
+    post_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_role(*WRITE_ROLES)),
+) -> ReviewQueuePostRead:
+    """Asks Kavi (generation_engine.py) to revise the draft using Neer's
+    (reviewer_engine.py) latest AI review — the per-platform `issues`/
+    `suggested_edits` already shown on the review-queue card — instead of
+    the human having to hand-edit the text themselves. Same "never touch
+    the checkpointed graph" contract as edit_post: the post stays paused
+    at human_review, ready for a follow-up edit/approve/reject call, and
+    a PostVersion is appended so the pre-regeneration draft is never
+    lost."""
+    brand = _get_org_brand(db, brand_id, current_user.org_id)
+    post = _get_post_or_404(db, brand.id, post_id)
+    _require_paused_at_human_review(post)
+
+    ai_review = _latest_ai_review_or_409(db, post)
+    feedback_by_platform = ai_review.comments.get("platforms", {}) if ai_review.comments else {}
+
+    revised_body_text, _model, _tokens = regenerate_copy_with_feedback(
+        post.body_text or {}, feedback_by_platform
+    )
+
+    post.body_text = revised_body_text
+    db.add(PostVersion(post_id=post.id, body_text=revised_body_text))
     db.flush()
     db.refresh(post)
 

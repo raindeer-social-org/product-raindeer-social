@@ -41,6 +41,7 @@ from packages.agents.pipeline.graph import run_pipeline
 from packages.agents.pipeline.nodes.generation_engine import (
     GenerationEngineError,
     build_generation_node,
+    regenerate_copy_with_feedback,
 )
 from packages.integrations.llm.base import LLMResponse
 
@@ -312,6 +313,56 @@ def test_generation_degrades_gracefully_on_unparseable_llm_output(db_session) ->
 
     platforms = result["generation_output"]["platforms"]
     assert set(platforms.keys()) == {"linkedin", "x"}
+
+
+# --- regenerate_copy_with_feedback (Issue #140) --------------------------
+
+
+def test_regenerate_copy_with_feedback_calls_llm_provider_only_through_interface() -> None:
+    body_text = {"linkedin": "Original draft."}
+    feedback = {"linkedin": {"issues": ["Too vague"], "suggested_edits": "Add a concrete stat."}}
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = LLMResponse(
+            text=json.dumps({"linkedin": "Revised draft with a concrete stat."}),
+            model="openrouter/free",
+            input_tokens=10,
+            output_tokens=5,
+        )
+        revised, model, tokens = regenerate_copy_with_feedback(body_text, feedback)
+
+    mock_llm.return_value.complete.assert_called_once()
+    assert revised == {"linkedin": "Revised draft with a concrete stat."}
+    assert model == "openrouter/free"
+    assert tokens == 15
+
+
+def test_regenerate_copy_with_feedback_falls_back_to_original_draft_on_llm_failure() -> None:
+    body_text = {"linkedin": "Original draft.", "x": "Original x draft."}
+    feedback = {"linkedin": {"issues": ["Too vague"], "suggested_edits": "Add a concrete stat."}}
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.side_effect = Exception("LLM provider unreachable")
+        revised, _model, tokens = regenerate_copy_with_feedback(body_text, feedback)
+
+    assert revised == body_text
+    assert tokens == 0
+
+
+def test_regenerate_copy_with_feedback_falls_back_on_unparseable_output() -> None:
+    body_text = {"linkedin": "Original draft."}
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = LLMResponse(
+            text="not valid json",
+            model="openrouter/free",
+            input_tokens=1,
+            output_tokens=1,
+        )
+        revised, _model, tokens = regenerate_copy_with_feedback(body_text, {})
+
+    assert revised == body_text
+    assert tokens == 0
 
 
 # --- error handling -----------------------------------------------------

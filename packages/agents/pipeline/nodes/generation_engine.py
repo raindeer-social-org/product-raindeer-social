@@ -328,6 +328,73 @@ Respond with ONLY the JSON object. No markdown code fences, no extra text.
 """
 
 
+def _build_regeneration_prompt(
+    body_text: dict[str, str], feedback_by_platform: dict[str, dict[str, Any]]
+) -> str:
+    platforms = list(body_text.keys())
+    drafts_json = json.dumps({platform: body_text.get(platform, "") for platform in platforms})
+    feedback_json = json.dumps(
+        {
+            platform: {
+                "issues": feedback_by_platform.get(platform, {}).get("issues", []),
+                "suggested_edits": feedback_by_platform.get(platform, {}).get("suggested_edits", ""),
+            }
+            for platform in platforms
+        }
+    )
+    return f"""You are a senior social media copywriter revising a draft
+post based on an editorial reviewer's feedback. Respond with strict JSON
+only — no markdown, no commentary, no code fences.
+
+## Current draft copy per platform
+{drafts_json}
+
+## Reviewer feedback per platform (issues to fix, and suggested edits)
+{feedback_json}
+
+## Task
+For EACH of these target platforms — {", ".join(platforms)} — rewrite that
+platform's draft to directly address every listed issue and incorporate
+the suggested edit, while preserving whatever already works about the
+current draft (its hook, structure, or tone where the feedback didn't
+flag a problem with it). A platform with no issues listed should come
+back materially unchanged. Each platform's revision must stay a genuinely
+distinct, platform-appropriate post — not the same text reused across
+platforms.
+
+Respond with a single JSON object whose keys are exactly the platform
+names listed above, and whose values are the revised copy text (a plain
+string) for that platform.
+
+Respond with ONLY the JSON object. No markdown code fences, no extra text.
+"""
+
+
+def regenerate_copy_with_feedback(
+    body_text: dict[str, str], feedback_by_platform: dict[str, dict[str, Any]]
+) -> tuple[dict[str, str], str, int]:
+    """Revises an already-generated draft using the Reviewer Engine's
+    (reviewer_engine.py) per-platform `issues`/`suggested_edits` — the
+    "Regenerate with Neer's feedback" action on the review queue (Issue
+    #140). Same interface-only, degrade-on-failure contract as
+    _generate_copy below: any LLM failure or unparseable response falls
+    back to the draft's ORIGINAL, unmodified text (never a blank/broken
+    draft) rather than raising."""
+    platforms = list(body_text.keys())
+    model = _default_model()
+    prompt = _build_regeneration_prompt(body_text, feedback_by_platform)
+    try:
+        response = get_llm_provider().complete(prompt=prompt, model=model, temperature=0.7)
+        revised = _parse_platform_copy(response.text, platforms)
+        return revised, response.model, response.input_tokens + response.output_tokens
+    except Exception:
+        logger.warning(
+            "Generation Engine regeneration LLM call/parse failed; keeping original draft",
+            exc_info=True,
+        )
+        return dict(body_text), model, 0
+
+
 def _generate_copy(
     platform_briefs: dict[str, dict[str, str]], platforms: list[str]
 ) -> tuple[dict[str, str], str, int]:
