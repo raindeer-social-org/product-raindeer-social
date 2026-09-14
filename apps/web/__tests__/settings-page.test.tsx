@@ -112,6 +112,12 @@ describe("SettingsPage", () => {
 
     renderPage();
 
+    // Wait for the actual fetch chain (AuthProvider -> BrandProvider ->
+    // this page's own fetchSocialAccounts) to settle before asserting —
+    // see the identical fix in onboarding-page.test.tsx/
+    // social-accounts-page.test.tsx for why a bare findByText can
+    // occasionally race a still-loading intermediate render.
+    await waitFor(() => expect(fetchSocialAccountsMock).toHaveBeenCalled());
     expect(await screen.findByText("No channels connected")).toBeInTheDocument();
   });
 
