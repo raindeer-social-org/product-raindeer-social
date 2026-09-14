@@ -66,6 +66,16 @@ function IconSocial() {
     </svg>
   );
 }
+function IconArena() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="6" cy="6" r="2.2" stroke="currentColor" strokeWidth="1.8" />
+      <circle cx="18" cy="6" r="2.2" stroke="currentColor" strokeWidth="1.8" />
+      <circle cx="12" cy="18" r="2.2" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M7.7 7.4L11 16M16.3 7.4L13 16M8.2 6h7.6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
 function IconAnalytics() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -154,6 +164,14 @@ const NAV_LINKS: { href: string; label: string; icon: () => ReactNode }[] = [
   { href: "/creative", label: "Creative · Keshav", icon: IconCreative },
   { href: "/create-post", label: "Create Post", icon: IconCreatePost },
   { href: "/content-ai", label: "Content AI", icon: IconContentAI },
+// from the mockup migration (Research, Creative, Create Post, Content AI,
+// Settings) add their own nav entry in their own PR once the page itself
+// exists — keeps this list from linking to 404s in the meantime. Arena
+// (Issue #124) is the first of those to land.
+const NAV_LINKS: { href: string; label: string; icon: () => ReactNode }[] = [
+  { href: "/", label: "Dashboard", icon: IconDashboard },
+  { href: "/calendar", label: "Calendar", icon: IconCalendar },
+  { href: "/arena", label: "Content Arena", icon: IconArena },
   { href: "/review-queue", label: "Review Queue", icon: IconReview },
   { href: "/brands", label: "Brands", icon: IconBrand },
   { href: "/onboarding", label: "Onboarding", icon: IconOnboarding },
