@@ -286,7 +286,7 @@ describe("BrandsPage", () => {
     expect(openSpy).toHaveBeenCalledWith("https://cdn.example.com/report.pdf", "_blank", "noopener,noreferrer");
   });
 
-  it("navigates to onboarding when re-interviewing with Aarav", async () => {
+  it("navigates to the Aarav interview flow when re-interviewing", async () => {
     fetchBrandsMock.mockResolvedValue([makeBrand()]);
     const user = userEvent.setup();
 
@@ -295,6 +295,6 @@ describe("BrandsPage", () => {
 
     await user.click(within(card).getByRole("button", { name: "Re-interview with Aarav" }));
 
-    expect(routerPush).toHaveBeenCalledWith("/onboarding");
+    expect(routerPush).toHaveBeenCalledWith("/onboarding/interview");
   });
 });
