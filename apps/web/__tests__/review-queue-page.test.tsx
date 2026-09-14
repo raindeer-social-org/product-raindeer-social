@@ -63,10 +63,14 @@ function makePost(overrides: Partial<ReviewQueuePost> = {}): ReviewQueuePost {
               verdict: "revise",
               issues: ["Missing a call to action"],
               suggested_edits: "Add a link to the product page at the end.",
+              predicted_engagement_score: 64,
+              predicted_engagement_reasoning: "Based on 5 historical posts averaging 3.20% engagement.",
             },
           },
           model: "openrouter/free",
         },
+        predicted_engagement_score: 64,
+        predicted_engagement_reasoning: "Based on 5 historical posts averaging 3.20% engagement.",
         created_at: "2026-08-20T10:05:00Z",
       },
     ],
@@ -115,6 +119,19 @@ describe("ReviewQueuePage", () => {
     expect(screen.getByText(/AI reviewer score: 72\/100/)).toBeInTheDocument();
     expect(screen.getByText(/Missing a call to action/)).toBeInTheDocument();
     expect(screen.getByText(/Add a link to the product page at the end\./)).toBeInTheDocument();
+  });
+
+  it("renders the predicted engagement score and reasoning next to the AI review", async () => {
+    fetchReviewQueueMock.mockResolvedValue([makePost()]);
+
+    renderPage();
+
+    await screen.findByText(/Check out our new widget line!/);
+    expect(screen.getByText("Predicted engagement")).toBeInTheDocument();
+    expect(screen.getByText(/Predicted engagement: 64\/100/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Based on 5 historical posts averaging 3\.20% engagement\./)
+    ).toBeInTheDocument();
   });
 
   it("approves a post through the API and removes it from the queue", async () => {
