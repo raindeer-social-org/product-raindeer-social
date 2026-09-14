@@ -364,7 +364,7 @@ export async function rescheduleReviewPost(
 // --- Social accounts (Issue #91) ---
 
 // Mirrors apps/api/models/social_account.py::SocialPlatform.
-export type SocialPlatform = "linkedin" | "instagram" | "threads" | "facebook";
+export type SocialPlatform = "linkedin" | "x" | "instagram" | "threads" | "facebook";
 
 // Mirrors apps/api/models/social_account.py::SocialAccountStatus.
 export type SocialAccountStatus = "active" | "expired" | "revoked";
@@ -414,6 +414,21 @@ export async function fetchSocialAccounts(token: string, brandId: string): Promi
 // the browser does with it.
 export async function connectLinkedIn(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
   const res = await fetch(socialAccountsUrl(brandId, "/linkedin/connect"), {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+// Same shape as connectLinkedIn — starts X's OAuth flow via
+// apps/api/routers/social_accounts.py::connect_x.
+export async function connectX(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  const res = await fetch(socialAccountsUrl(brandId, "/x/connect"), {
     method: "POST",
     headers: authHeaders(token),
   });

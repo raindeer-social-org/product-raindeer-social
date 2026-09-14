@@ -48,7 +48,12 @@ class LinkedInProvider(SocialOAuthProvider, SocialPublisher):
         }
         return f"{self.AUTHORIZE_URL}?{urlencode(params)}"
 
-    def exchange_code(self, code: str, redirect_uri: str) -> SocialTokens:
+    def exchange_code(
+        self, code: str, redirect_uri: str, code_verifier: str | None = None
+    ) -> SocialTokens:
+        # LinkedIn's authorization-code flow doesn't use PKCE — code_verifier
+        # is part of the shared SocialOAuthProvider interface (XProvider
+        # needs it), unused here.
         with track_integration_call("linkedin", "oauth_exchange"):
             response = httpx.post(
                 self.TOKEN_URL,

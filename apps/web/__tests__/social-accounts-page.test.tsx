@@ -11,6 +11,7 @@ import type { SocialAccount } from "@/lib/api";
 const fetchBrandsMock = vi.fn();
 const fetchSocialAccountsMock = vi.fn();
 const connectLinkedInMock = vi.fn();
+const connectXMock = vi.fn();
 const connectInstagramMock = vi.fn();
 const connectThreadsMock = vi.fn();
 const connectFacebookMock = vi.fn();
@@ -23,6 +24,7 @@ vi.mock("@/lib/api", async () => {
     fetchBrands: (...args: unknown[]) => fetchBrandsMock(...args),
     fetchSocialAccounts: (...args: unknown[]) => fetchSocialAccountsMock(...args),
     connectLinkedIn: (...args: unknown[]) => connectLinkedInMock(...args),
+    connectX: (...args: unknown[]) => connectXMock(...args),
     connectInstagram: (...args: unknown[]) => connectInstagramMock(...args),
     connectThreads: (...args: unknown[]) => connectThreadsMock(...args),
     connectFacebook: (...args: unknown[]) => connectFacebookMock(...args),
@@ -84,6 +86,7 @@ describe("SocialAccountsPage", () => {
     fetchBrandsMock.mockReset();
     fetchSocialAccountsMock.mockReset();
     connectLinkedInMock.mockReset();
+    connectXMock.mockReset();
     connectInstagramMock.mockReset();
     connectThreadsMock.mockReset();
     connectFacebookMock.mockReset();
@@ -158,6 +161,25 @@ describe("SocialAccountsPage", () => {
     expect(redirectToAuthorizeUrlMock).not.toHaveBeenCalled();
     // Not a raw/generic backend error message anywhere on the page.
     expect(screen.queryByText("LinkedIn OAuth is not configured")).not.toBeInTheDocument();
+  });
+
+  it("starts the X OAuth flow and redirects to the authorize URL on success", async () => {
+    connectXMock.mockResolvedValue({
+      authorize_url: "https://twitter.com/i/oauth2/authorize?foo=bar",
+    });
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(fetchSocialAccountsMock).toHaveBeenCalled());
+
+    await user.click(screen.getByRole("button", { name: "Connect X" }));
+
+    await waitFor(() => {
+      expect(connectXMock).toHaveBeenCalledWith("test-token", "brand-1");
+      expect(redirectToAuthorizeUrlMock).toHaveBeenCalledWith(
+        "https://twitter.com/i/oauth2/authorize?foo=bar"
+      );
+    });
   });
 
   it.each([
