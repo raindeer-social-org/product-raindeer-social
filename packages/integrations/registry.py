@@ -9,7 +9,10 @@ from packages.integrations.llm.openrouter_provider import OpenRouterProvider
 from packages.integrations.search.base import SearchProvider
 from packages.integrations.search.tavily import TavilyProvider
 from packages.integrations.social.base import SocialOAuthProvider, SocialPublisher
+from packages.integrations.social.facebook_provider import FacebookProvider
+from packages.integrations.social.instagram_provider import InstagramProvider
 from packages.integrations.social.linkedin_provider import LinkedInProvider
+from packages.integrations.social.threads_provider import ThreadsProvider
 from packages.integrations.social.x_provider import XProvider
 from packages.integrations.storage.base import StorageProvider
 from packages.integrations.storage.supabase_provider import SupabaseStorageProvider
@@ -40,6 +43,22 @@ _SOCIAL_OAUTH_PROVIDERS = {
         client_id=settings.x_client_id or "",
         client_secret=settings.x_client_secret or "",
     ),
+    # Instagram, Threads, and Facebook are all Meta Graph API products
+    # registered under one Meta developer app, so they share
+    # META_APP_ID/META_APP_SECRET rather than each getting its own
+    # client_id/secret pair the way LinkedIn/X do.
+    "instagram": lambda settings: InstagramProvider(
+        client_id=settings.meta_app_id or "",
+        client_secret=settings.meta_app_secret or "",
+    ),
+    "threads": lambda settings: ThreadsProvider(
+        client_id=settings.meta_app_id or "",
+        client_secret=settings.meta_app_secret or "",
+    ),
+    "facebook": lambda settings: FacebookProvider(
+        client_id=settings.meta_app_id or "",
+        client_secret=settings.meta_app_secret or "",
+    ),
 }
 
 # Every publisher is currently the same adapter instance that also
@@ -55,6 +74,18 @@ _SOCIAL_PUBLISHERS = {
     "x": lambda settings: XProvider(
         client_id=settings.x_client_id or "",
         client_secret=settings.x_client_secret or "",
+    ),
+    "instagram": lambda settings: InstagramProvider(
+        client_id=settings.meta_app_id or "",
+        client_secret=settings.meta_app_secret or "",
+    ),
+    "threads": lambda settings: ThreadsProvider(
+        client_id=settings.meta_app_id or "",
+        client_secret=settings.meta_app_secret or "",
+    ),
+    "facebook": lambda settings: FacebookProvider(
+        client_id=settings.meta_app_id or "",
+        client_secret=settings.meta_app_secret or "",
     ),
 }
 

@@ -11,6 +11,9 @@ import type { SocialAccount } from "@/lib/api";
 const fetchBrandsMock = vi.fn();
 const fetchSocialAccountsMock = vi.fn();
 const connectLinkedInMock = vi.fn();
+const connectInstagramMock = vi.fn();
+const connectThreadsMock = vi.fn();
+const connectFacebookMock = vi.fn();
 const disconnectSocialAccountMock = vi.fn();
 
 vi.mock("@/lib/api", async () => {
@@ -20,6 +23,9 @@ vi.mock("@/lib/api", async () => {
     fetchBrands: (...args: unknown[]) => fetchBrandsMock(...args),
     fetchSocialAccounts: (...args: unknown[]) => fetchSocialAccountsMock(...args),
     connectLinkedIn: (...args: unknown[]) => connectLinkedInMock(...args),
+    connectInstagram: (...args: unknown[]) => connectInstagramMock(...args),
+    connectThreads: (...args: unknown[]) => connectThreadsMock(...args),
+    connectFacebook: (...args: unknown[]) => connectFacebookMock(...args),
     disconnectSocialAccount: (...args: unknown[]) => disconnectSocialAccountMock(...args),
   };
 });
@@ -78,6 +84,9 @@ describe("SocialAccountsPage", () => {
     fetchBrandsMock.mockReset();
     fetchSocialAccountsMock.mockReset();
     connectLinkedInMock.mockReset();
+    connectInstagramMock.mockReset();
+    connectThreadsMock.mockReset();
+    connectFacebookMock.mockReset();
     disconnectSocialAccountMock.mockReset();
     redirectToAuthorizeUrlMock.mockReset();
 
@@ -109,6 +118,11 @@ describe("SocialAccountsPage", () => {
   it("shows an empty state when nothing is connected for the brand", async () => {
     renderPage();
 
+    // Wait for the actual fetch chain (AuthProvider -> BrandProvider ->
+    // this page's own fetchSocialAccounts) to settle before asserting —
+    // see the identical fix in onboarding-page.test.tsx for why a bare
+    // findByText can occasionally race a still-loading intermediate render.
+    await waitFor(() => expect(fetchSocialAccountsMock).toHaveBeenCalled());
     expect(await screen.findByText("No accounts connected")).toBeInTheDocument();
   });
 
@@ -144,6 +158,59 @@ describe("SocialAccountsPage", () => {
     expect(redirectToAuthorizeUrlMock).not.toHaveBeenCalled();
     // Not a raw/generic backend error message anywhere on the page.
     expect(screen.queryByText("LinkedIn OAuth is not configured")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["Instagram", connectInstagramMock, "https://www.facebook.com/v21.0/dialog/oauth?foo=bar"],
+    ["Threads", connectThreadsMock, "https://threads.net/oauth/authorize?foo=bar"],
+    ["Facebook", connectFacebookMock, "https://www.facebook.com/v21.0/dialog/oauth?foo=bar"],
+  ])("starts the %s OAuth flow and redirects to the authorize URL on success", async (label, mock, authorizeUrl) => {
+    mock.mockResolvedValue({ authorize_url: authorizeUrl });
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(fetchSocialAccountsMock).toHaveBeenCalled());
+
+    await user.click(screen.getByRole("button", { name: `Connect ${label}` }));
+
+    await waitFor(() => {
+      expect(mock).toHaveBeenCalledWith("test-token", "brand-1");
+      expect(redirectToAuthorizeUrlMock).toHaveBeenCalledWith(authorizeUrl);
+    });
+  });
+
+  it.each([
+    ["Instagram", connectInstagramMock],
+    ["Threads", connectThreadsMock],
+    ["Facebook", connectFacebookMock],
+  ])("shows a friendly message instead of a generic error when %s isn't configured", async (label, mock) => {
+    mock.mockRejectedValue(new ApiError(`${label} OAuth is not configured`, 503));
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(fetchSocialAccountsMock).toHaveBeenCalled());
+
+    await user.click(screen.getByRole("button", { name: `Connect ${label}` }));
+
+    expect(await screen.findByText(`${label} isn't configured on this server yet.`)).toBeInTheDocument();
+    expect(redirectToAuthorizeUrlMock).not.toHaveBeenCalled();
+  });
+
+  it("renders a status badge for a connected Instagram/Threads/Facebook account", async () => {
+    fetchSocialAccountsMock.mockResolvedValue([
+      makeAccount({ id: "a1", platform: "instagram", external_account_id: "ig-123" }),
+      makeAccount({ id: "a2", platform: "threads", external_account_id: "th-456" }),
+      makeAccount({ id: "a3", platform: "facebook", external_account_id: "fb-789" }),
+    ]);
+
+    renderPage();
+
+    expect(await screen.findByText("Instagram")).toBeInTheDocument();
+    expect(screen.getByText("Threads")).toBeInTheDocument();
+    expect(screen.getByText("Facebook")).toBeInTheDocument();
+    expect(screen.getByText("Account ID: ig-123")).toBeInTheDocument();
+    expect(screen.getByText("Account ID: th-456")).toBeInTheDocument();
+    expect(screen.getByText("Account ID: fb-789")).toBeInTheDocument();
   });
 
   it("disconnects an account only after the confirmation step is completed", async () => {
