@@ -3,10 +3,10 @@
 // telemetry. Kept separate from build-nodes.ts (which is about the
 // canvas) since the dock reads the same run but summarizes it
 // differently (a flat timeline instead of per-node cards).
-import type { AgentType, ArenaAgentRun, ArenaRun } from "@/lib/api";
+import type { ArenaAgentType, ArenaAgentRun, ArenaRun } from "@/lib/api";
 import { formatClock, formatCost, formatTokens, truncate } from "./format";
 
-export const AGENT_DISPLAY_NAME: Record<AgentType, string> = {
+export const AGENT_DISPLAY_NAME: Record<ArenaAgentType, string> = {
   research: "Ved",
   creative: "Keshav",
   generation: "Kavi",
@@ -110,7 +110,7 @@ export function buildSources(run: ArenaRun): SourceEntry[] {
 }
 
 export interface CostRow {
-  agentType: AgentType;
+  agentType: ArenaAgentType;
   who: string;
   model: string;
   tokens: string;

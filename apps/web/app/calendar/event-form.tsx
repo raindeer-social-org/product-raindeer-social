@@ -10,7 +10,9 @@ import { fromDatetimeLocalValue, toDatetimeLocalValue } from "./date-utils";
 import { CALENDAR_EVENT_STATUSES, STATUS_LABELS } from "./status";
 
 // Kept in sync with apps/api/models/content_calendar_event.py::SUPPORTED_PLATFORMS.
-const PLATFORM_OPTIONS: { value: string; label: string }[] = [
+// Exported so autogen-modal.tsx's platform multi-select uses the same list
+// rather than a second copy that could drift out of sync.
+export const PLATFORM_OPTIONS: { value: string; label: string }[] = [
   { value: "linkedin", label: "LinkedIn" },
   { value: "x", label: "X" },
 ];

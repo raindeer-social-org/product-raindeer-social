@@ -12,6 +12,7 @@ const fetchCalendarEventsMock = vi.fn();
 const createCalendarEventMock = vi.fn();
 const updateCalendarEventMock = vi.fn();
 const deleteCalendarEventMock = vi.fn();
+const fetchCalendarEventPostMock = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   fetchBrands: (...args: unknown[]) => fetchBrandsMock(...args),
@@ -19,6 +20,7 @@ vi.mock("@/lib/api", () => ({
   createCalendarEvent: (...args: unknown[]) => createCalendarEventMock(...args),
   updateCalendarEvent: (...args: unknown[]) => updateCalendarEventMock(...args),
   deleteCalendarEvent: (...args: unknown[]) => deleteCalendarEventMock(...args),
+  fetchCalendarEventPost: (...args: unknown[]) => fetchCalendarEventPostMock(...args),
 }));
 
 const BRANDS = [
@@ -96,12 +98,16 @@ describe("CalendarPage", () => {
     createCalendarEventMock.mockReset();
     updateCalendarEventMock.mockReset();
     deleteCalendarEventMock.mockReset();
+    fetchCalendarEventPostMock.mockReset();
 
     window.localStorage.clear();
     window.localStorage.setItem("raindeer.auth.token", "test-token");
 
     fetchBrandsMock.mockResolvedValue(BRANDS);
     fetchCalendarEventsMock.mockResolvedValue([]);
+    // No Post generated yet for any event by default — individual tests
+    // override this when they need review/agent-run data present.
+    fetchCalendarEventPostMock.mockResolvedValue(null);
   });
 
   it("fetches and renders the selected brand's events on mount", async () => {
@@ -148,7 +154,7 @@ describe("CalendarPage", () => {
 
     await waitFor(() => expect(fetchCalendarEventsMock).toHaveBeenCalled());
 
-    await user.click(screen.getByRole("button", { name: "+ New event" }));
+    await user.click(screen.getByRole("button", { name: "+ New post" }));
     const dialog = await screen.findByRole("dialog", { name: "New event" });
 
     await user.type(within(dialog).getByLabelText("Title"), "New Launch");
@@ -184,7 +190,12 @@ describe("CalendarPage", () => {
     const chip = await screen.findByRole("button", { name: /Existing Event/ });
     expect(chip.className).toContain("status-scheduled");
 
+    // Clicking an event now opens the post preview modal first (Issue
+    // #125) — "Edit" there is what opens the actual edit form.
     await user.click(chip);
+    const preview = await screen.findByRole("dialog", { name: "Existing Event" });
+    await user.click(within(preview).getByRole("button", { name: "Edit" }));
+
     const dialog = await screen.findByRole("dialog", { name: "Edit event" });
 
     await user.selectOptions(within(dialog).getByLabelText("Status"), "approved");
@@ -216,6 +227,9 @@ describe("CalendarPage", () => {
     const chip = await screen.findByRole("button", { name: /Doomed Event/ });
     await user.click(chip);
 
+    const preview = await screen.findByRole("dialog", { name: "Doomed Event" });
+    await user.click(within(preview).getByRole("button", { name: "Edit" }));
+
     const dialog = await screen.findByRole("dialog", { name: "Edit event" });
     await act(async () => {
       await user.click(within(dialog).getByRole("button", { name: "Delete" }));
@@ -223,6 +237,34 @@ describe("CalendarPage", () => {
 
     await waitFor(() => expect(deleteCalendarEventMock).toHaveBeenCalledWith("test-token", "brand-1", "e1"));
     await waitFor(() => expect(screen.queryByRole("button", { name: /Doomed Event/ })).not.toBeInTheDocument());
+  });
+
+  it("auto-generates a batch of scheduled posts by looping the existing create-event API", async () => {
+    createCalendarEventMock.mockImplementation((_token: string, _brandId: string, payload: object) =>
+      Promise.resolve(makeEvent({ id: `gen-${Math.random()}`, ...payload }))
+    );
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(fetchCalendarEventsMock).toHaveBeenCalled());
+
+    await user.click(screen.getByRole("button", { name: "✧ Auto-generate calendar" }));
+    const dialog = await screen.findByRole("dialog", { name: "Auto-generate calendar" });
+
+    // Shrink the batch so the test doesn't need to wait on 28 sequential
+    // fake API calls — 1 day * 1 post/day = 1 event.
+    const daysSlider = within(dialog).getByLabelText("Days ahead");
+    await act(async () => {
+      daysSlider.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await act(async () => {
+      await user.click(within(dialog).getByRole("button", { name: /Generate \d+ posts?/ }));
+    });
+
+    await waitFor(() => expect(createCalendarEventMock).toHaveBeenCalled());
+    expect(screen.queryByRole("dialog", { name: "Auto-generate calendar" })).not.toBeInTheDocument();
+    await screen.findByText(/Created \d+ scheduled posts?\./);
   });
 
   it("reflects a status change from a background refresh (e.g. on window focus) without a manual reload", async () => {

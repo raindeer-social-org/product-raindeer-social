@@ -36,12 +36,31 @@ class Settings(BaseSettings):
     # XProvider uses today.
     x_api_key: str | None = None
 
+    # Instagram, Threads, and Facebook Page publishing are all Meta Graph
+    # API products registered under one Meta developer app — unlike
+    # LinkedIn/X, they share a single client id/secret pair rather than
+    # each getting its own.
+    meta_app_id: str | None = None
+    meta_app_secret: str | None = None
+
+    instagram_redirect_uri: str | None = None
+    threads_redirect_uri: str | None = None
+    facebook_redirect_uri: str | None = None
+
     search_provider: str = "tavily"
     llm_provider: str = "openrouter"
     storage_provider: str = "supabase"
     embedding_provider: str = "openai"
     video_provider: str = "runway"
     image_provider: str = "fal"
+    speech_provider: str = "whisper"
+
+    # Onboarding's real voice-answer recording (Issue #144) is transcribed
+    # via faster-whisper — a free, fully open-source, locally-run model
+    # (no API key, no per-call cost). Model size trades off
+    # speed/accuracy/RAM; "base" runs acceptably fast on CPU for a short
+    # onboarding answer. See packages/integrations/speech/whisper_provider.py.
+    whisper_model_size: str = "base"
 
     # OpenRouter's free-models router — swap for a paid model slug (e.g.
     # "anthropic/claude-sonnet-4.5") once quality/latency needs outgrow it.
