@@ -96,6 +96,31 @@ export interface CalendarEventUpdateInput {
   status?: CalendarEventStatus;
 }
 
+// Mirrors apps/api/models/agent_run.py::AgentType.
+export type AgentType =
+  | "onboarding"
+  | "research"
+  | "creative"
+  | "generation"
+  | "reviewer"
+  | "human_review"
+  | "scheduler"
+  | "publisher"
+  | "analytics_collector"
+  | "weekly_report";
+
+// Mirrors apps/api/schemas/calendar.py::CalendarEventAgentRunRead.
+export interface CalendarEventAgentRun {
+  id: string;
+  agent_type: AgentType;
+  output: Record<string, unknown> | null;
+  model: string | null;
+  tokens: number | null;
+  cost: number | null;
+  latency_ms: number | null;
+  created_at: string;
+}
+
 // Mirrors apps/api/models/review_feedback.py::ReviewSource/ReviewVerdict.
 export type ReviewSource = "ai_reviewer" | "human";
 export type ReviewVerdict = "approve" | "revise" | "reject";
@@ -117,6 +142,22 @@ export interface ReviewFeedback {
   predicted_engagement_score: number | null;
   predicted_engagement_reasoning: string | null;
   created_at: string;
+}
+
+// Mirrors apps/api/schemas/calendar.py::CalendarEventPostRead. Returned by
+// fetchCalendarEventPost — null when the pipeline trigger hasn't picked up
+// this calendar event yet (still SCHEDULED, no Post row exists).
+export interface CalendarEventPost {
+  id: string;
+  brand_id: string;
+  calendar_event_id: string | null;
+  current_pipeline_stage: PipelineStage;
+  body_text: Record<string, string> | null;
+  media: { platform: string; format: string; url: string | null }[] | null;
+  created_at: string;
+  updated_at: string;
+  review_feedback: ReviewFeedback[];
+  agent_runs: CalendarEventAgentRun[];
 }
 
 // Mirrors apps/api/models/post.py::PipelineStage. "failed" is set
@@ -297,6 +338,25 @@ export async function deleteCalendarEvent(token: string, brandId: string, eventI
   }
 }
 
+// The Post the pipeline trigger has generated for this calendar event (if
+// any) plus its review history and agent run trail, for the calendar's
+// post preview modal. Resolves to null when no Post exists yet.
+export async function fetchCalendarEventPost(
+  token: string,
+  brandId: string,
+  eventId: string
+): Promise<CalendarEventPost | null> {
+  const res = await fetch(calendarEventsUrl(brandId, `/${eventId}/post`), {
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
 // apps/api/routers/review.py mounts these under
 // /brands/{brand_id}/review-queue, so every call is scoped to a brand —
 // same convention as calendarEventsUrl above.
@@ -397,8 +457,9 @@ export async function rescheduleReviewPost(
 // Mirrors apps/api/models/agent_run.py::AgentType — only the eight
 // per-post pipeline stages can appear here (onboarding/weekly_report runs
 // never carry a post_id, so the arena endpoints below can never surface
-// them).
-export type AgentType =
+// them). Named distinctly from the broader AgentType above since the two
+// are intentionally different-width subsets of the same backend enum.
+export type ArenaAgentType =
   | "research"
   | "creative"
   | "generation"
@@ -416,7 +477,7 @@ export type AgentType =
 // a real prompt.
 export interface ArenaAgentRun {
   id: string;
-  agent_type: AgentType;
+  agent_type: ArenaAgentType;
   output: Record<string, unknown> | null;
   model: string | null;
   tokens: number | null;
