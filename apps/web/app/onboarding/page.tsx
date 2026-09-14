@@ -130,7 +130,7 @@ export default function OnboardingPage() {
     <div>
       <PageHeader
         title="Onboarding"
-        description={`Teach the AI ${selectedBrand.name}'s voice, audience, and goals.`}
+        description={`Meet Aarav, your onboarding agent — teach it ${selectedBrand.name}'s voice, audience, and goals.`}
       />
 
       {isLoading ? (
@@ -178,8 +178,8 @@ export default function OnboardingPage() {
               <CardBody>
                 {isGenerating ? (
                   <p role="status" className="text-sm text-slate-500">
-                    Running research and synthesis — this can take a minute or two. Feel free to
-                    leave this open; the report will appear here as soon as it&rsquo;s ready.
+                    Aarav is running research and synthesis — this can take a minute or two. Feel
+                    free to leave this open; the report will appear here as soon as it&rsquo;s ready.
                   </p>
                 ) : selectedBrand.brand_report ? (
                   <div className="space-y-6">

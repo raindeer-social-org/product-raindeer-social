@@ -31,6 +31,24 @@ caller-supplied Session and returns the actual LangGraph node function.
 graph.py's build_pipeline_graph() calls this factory for the "research"
 stage only — the other stages, and the graph's overall wiring/interrupt
 logic, are untouched.
+
+Issue #105 adds a second, standing entrypoint into this same research
+logic: run_standalone_brand_research(db, brand_id), called on a Celery
+Beat schedule (apps/api/worker.py) for every brand rather than only when
+a Post is about to be written. Both entrypoints funnel through the same
+_brand_research_brief() core — the on-demand, per-post path
+(_research_brief) and the standalone path only differ in what identifies
+the request (a Post, with its own calendar-scoped platforms/
+target_datetime, vs. a bare Brand researching every SUPPORTED_PLATFORMS
+with no target_datetime yet) and in how the result is persisted: the
+per-post path's output is returned into PipelineState for run_pipeline()
+to log as an AgentRun row (same as every other stage), while the
+standalone path — like packages/agents/reporting/weekly_report.py's
+per-brand job — isn't reached through run_pipeline at all, so it logs its
+own AgentRun(agent_type=RESEARCH, post_id=None) row directly, with
+brand_id carried in `input` (same "post_id left null, id carried in
+input" convention that module's docstring and apps/api/models/agent_run.py
+already establish for a job that isn't a pipeline node).
 """
 
 import logging
@@ -40,6 +58,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from apps.api.models.agent_run import AgentRun, AgentType
 from apps.api.models.brand import Brand
 from apps.api.models.content_calendar_event import ContentCalendarEvent, SUPPORTED_PLATFORMS
 from apps.api.models.post import Post
@@ -130,12 +149,16 @@ def _build_timing_signal(
     }
 
 
-def _research_brief(db: Session, post: Post) -> dict[str, Any]:
-    brand = db.get(Brand, post.brand_id)
-    if brand is None:
-        raise ResearchEngineError(f"Research Engine: no Brand found for post {post.id}")
-
-    platforms = _platforms_for(post, db)
+def _brand_research_brief(
+    db: Session, brand: Brand, *, platforms: list[str], target_datetime: datetime | None
+) -> dict[str, Any]:
+    """The actual research work — platform + industry trend search via
+    SearchProvider, plus the brand's voice/audience/positioning via #16's
+    retrieval helper — shared by both entrypoints below (the per-post
+    _research_brief and the standalone run_standalone_brand_research).
+    Deliberately Post-agnostic: it only needs a Brand, the platforms to
+    research, and an optional already-known target_datetime, so neither
+    caller has to duplicate this logic."""
     industry = brand.industry or brand.name
 
     platform_trend_results = {
@@ -148,24 +171,80 @@ def _research_brief(db: Session, post: Post) -> dict[str, Any]:
         result for results in platform_trend_results.values() for result in results
     ] + industry_trend_results
 
-    calendar_event = _calendar_event_for(post, db)
     brand_context = _brand_context_safely(
         db, brand.id, query=f"{brand.name} brand voice, audience, and positioning"
     )
 
     return {
-        "post_id": str(post.id),
         "brand_context": brand_context,
         "platform_trends": {
             platform: _serialize(results) for platform, results in platform_trend_results.items()
         },
         "industry_trends": _serialize(industry_trend_results),
-        "timing_signal": _build_timing_signal(
-            platforms,
-            all_trend_results,
-            calendar_event.target_datetime if calendar_event else None,
-        ),
+        "timing_signal": _build_timing_signal(platforms, all_trend_results, target_datetime),
     }
+
+
+def _research_brief(db: Session, post: Post) -> dict[str, Any]:
+    brand = db.get(Brand, post.brand_id)
+    if brand is None:
+        raise ResearchEngineError(f"Research Engine: no Brand found for post {post.id}")
+
+    platforms = _platforms_for(post, db)
+    calendar_event = _calendar_event_for(post, db)
+    brief = _brand_research_brief(
+        db,
+        brand,
+        platforms=platforms,
+        target_datetime=calendar_event.target_datetime if calendar_event else None,
+    )
+    return {"post_id": str(post.id), **brief}
+
+
+def run_standalone_brand_research(db: Session, brand_id: uuid.UUID) -> AgentRun:
+    """Issue #105 — Ved's standing research job. Runs the exact same
+    _brand_research_brief() core the on-demand, per-post research node
+    calls, but for a single brand independent of whether a post happens
+    to be scheduled onto the calendar, so a brand's research stays fresh
+    between calendar slots rather than only refreshing each time a post
+    is about to be written.
+
+    Called on a Celery Beat schedule (apps/api/worker.py) once per active
+    brand. There's no ContentCalendarEvent to narrow the platform list or
+    supply a target_datetime here (unlike the per-post path), so this
+    researches every SUPPORTED_PLATFORMS platform with target_datetime=None.
+
+    Unlike the per-post path — whose output is returned into PipelineState
+    for run_pipeline() to log as an AgentRun row alongside every other
+    stage — this path isn't reached through run_pipeline at all, so (same
+    as packages/agents/reporting/weekly_report.py's per-brand job) it logs
+    its own AgentRun(agent_type=RESEARCH, post_id=None) row directly, with
+    brand_id carried in `input` instead. Flushes but does not commit —
+    callers (a Celery task, a test) control the transaction boundary.
+
+    Raises ResearchEngineError if brand_id doesn't resolve to a real
+    Brand — a data/programming error, not a transient provider failure,
+    same as build_research_node's Post-not-found case.
+    """
+    brand = db.get(Brand, brand_id)
+    if brand is None:
+        raise ResearchEngineError(f"Research Engine: no Brand found for brand_id={brand_id}")
+
+    brief = _brand_research_brief(
+        db, brand, platforms=list(SUPPORTED_PLATFORMS), target_datetime=None
+    )
+    brief = {"brand_id": str(brand.id), **brief}
+
+    run = AgentRun(
+        post_id=None,
+        agent_type=AgentType.RESEARCH,
+        input={"brand_id": str(brand_id)},
+        output={"research_brief": brief},
+    )
+    db.add(run)
+    db.flush()
+    db.refresh(run)
+    return run
 
 
 def build_research_node(db: Session | None):
