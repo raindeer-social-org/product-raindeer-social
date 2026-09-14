@@ -12,6 +12,9 @@ from apps.api.config.database import Base
 class SocialPlatform(str, enum.Enum):
     LINKEDIN = "linkedin"
     X = "x"
+    INSTAGRAM = "instagram"
+    THREADS = "threads"
+    FACEBOOK = "facebook"
 
 
 class SocialAccountStatus(str, enum.Enum):
