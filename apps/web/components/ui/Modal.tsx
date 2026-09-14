@@ -38,7 +38,7 @@ export function Modal({
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
-        className="fixed inset-0 bg-slate-900/40 animate-fade-in"
+        className="fixed inset-0 bg-ink-950/40 animate-fade-in"
         onClick={onClose}
         aria-hidden="true"
       />
@@ -47,20 +47,20 @@ export function Modal({
         aria-modal="true"
         aria-labelledby={title ? titleId : undefined}
         className={cn(
-          "relative w-full animate-slide-up rounded-xl bg-white shadow-popover",
+          "relative w-full animate-slide-up rounded-2xl bg-white shadow-modal",
           sizeClass,
         )}
       >
         {title ? (
-          <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-            <h2 id={titleId} className="text-base font-semibold text-slate-900">
+          <div className="flex items-center justify-between border-b border-line-faint px-5 py-4">
+            <h2 id={titleId} className="text-base font-semibold text-ink-950">
               {title}
             </h2>
             <button
               type="button"
               onClick={onClose}
               aria-label="Close"
-              className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              className="rounded-md p-1 text-ink-300 hover:bg-canvas hover:text-ink-600"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path
@@ -75,7 +75,7 @@ export function Modal({
         ) : null}
         <div className="max-h-[70vh] overflow-y-auto scrollbar-thin px-5 py-4">{children}</div>
         {footer ? (
-          <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">{footer}</div>
+          <div className="flex justify-end gap-2 border-t border-line-faint px-5 py-4">{footer}</div>
         ) : null}
       </div>
     </div>,
