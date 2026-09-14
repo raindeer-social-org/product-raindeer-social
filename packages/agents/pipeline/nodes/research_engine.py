@@ -166,6 +166,13 @@ def _brand_research_brief(
         for platform in platforms
     }
     industry_trend_results = _search_safely(f"{industry} industry trends")
+    # Pulls concrete, quotable audience pain points/questions rather than
+    # just category-level trend headlines — this is what lets downstream
+    # stages (creative/generation) write a hook that references something
+    # real instead of a generic category-level angle.
+    audience_signal_results = _search_safely(
+        f"what {industry} customers are asking about or complaining about right now"
+    )
 
     all_trend_results = [
         result for results in platform_trend_results.values() for result in results
@@ -181,6 +188,7 @@ def _brand_research_brief(
             platform: _serialize(results) for platform, results in platform_trend_results.items()
         },
         "industry_trends": _serialize(industry_trend_results),
+        "audience_signals": _serialize(audience_signal_results),
         "timing_signal": _build_timing_signal(platforms, all_trend_results, target_datetime),
     }
 
