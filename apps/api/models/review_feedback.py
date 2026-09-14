@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, func
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -74,6 +74,17 @@ class ReviewFeedback(Base):
     # text — same reasoning as Post.body_text/PostVersion.body_text being
     # JSONB keyed by platform rather than a single string.
     comments: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+    # Issue #107 — the Reviewer Engine's predicted-engagement pass for this
+    # Post, grounded in the brand's actual historical EngagementSnapshot
+    # performance on the same platform(s) where enough history exists (see
+    # packages/agents/pipeline/nodes/reviewer_engine.py's
+    # _historical_engagement_safely), falling back to a pure LLM estimate
+    # otherwise. Nullable because only source=ai_reviewer rows populate
+    # these — a source=human row (#25's approve/reject) never predicts
+    # engagement, it records a human decision.
+    predicted_engagement_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    predicted_engagement_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
