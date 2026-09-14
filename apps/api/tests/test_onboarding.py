@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -259,3 +259,158 @@ def test_cross_org_onboarding_access_returns_404(db_session) -> None:
     )
 
     assert response.status_code == 404
+
+
+# --- Deeper questionnaire fields (Issue #144) ---
+
+
+@uses_test_session
+def test_upsert_accepts_deeper_questionnaire_fields(db_session) -> None:
+    brand, user = _setup_brand(db_session)
+
+    response = client.put(
+        f"/brands/{brand.id}/onboarding",
+        json={
+            "mission": "Make widgets everyone actually wants.",
+            "content_dos_donts": ["Never mention competitor X by name"],
+            "posting_cadence": "A few times a week",
+        },
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mission"] == "Make widgets everyone actually wants."
+    assert body["content_dos_donts"] == ["Never mention competitor X by name"]
+    assert body["posting_cadence"] == "A few times a week"
+
+
+# --- Real voice recording + transcription (Issue #144) ---
+
+_SPEECH_PATCH_TARGET = "apps.api.routers.onboarding.get_speech_provider"
+_STORAGE_PATCH_TARGET = "apps.api.routers.onboarding.get_storage_provider"
+
+
+class _FakeTranscription:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.language = "en"
+        self.duration_seconds = 3.5
+
+
+@uses_test_session
+def test_voice_answer_transcribes_and_stores_audio(db_session) -> None:
+    brand, user = _setup_brand(db_session)
+
+    fake_speech = MagicMock()
+    fake_speech.transcribe.return_value = _FakeTranscription("We sell widgets to small businesses.")
+    fake_storage = MagicMock()
+    fake_storage.upload.return_value = "https://storage.test/onboarding/voice/audience/take.webm"
+
+    with patch(_SPEECH_PATCH_TARGET, return_value=fake_speech), patch(
+        _STORAGE_PATCH_TARGET, return_value=fake_storage
+    ):
+        response = client.post(
+            f"/brands/{brand.id}/onboarding/voice-answers",
+            data={"question_id": "audience"},
+            files={"file": ("answer.webm", b"fake-audio-bytes", "audio/webm")},
+            headers=_auth_headers(user),
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["transcript"] == "We sell widgets to small businesses."
+    assert body["audio_url"] == "https://storage.test/onboarding/voice/audience/take.webm"
+    assert body["question_id"] == "audience"
+    fake_speech.transcribe.assert_called_once()
+    fake_storage.upload.assert_called_once()
+
+    listed = client.get(f"/brands/{brand.id}/onboarding/voice-answers", headers=_auth_headers(user))
+    assert listed.status_code == 200
+    assert len(listed.json()) == 1
+
+
+@uses_test_session
+def test_voice_answer_requires_write_role(db_session) -> None:
+    brand, viewer = _setup_brand(db_session, UserRole.VIEWER)
+
+    response = client.post(
+        f"/brands/{brand.id}/onboarding/voice-answers",
+        data={"question_id": "audience"},
+        files={"file": ("answer.webm", b"data", "audio/webm")},
+        headers=_auth_headers(viewer),
+    )
+
+    assert response.status_code == 403
+
+
+# --- Real asset uploads (Issue #144) ---
+
+
+@uses_test_session
+def test_upload_onboarding_asset_stores_and_lists(db_session) -> None:
+    brand, user = _setup_brand(db_session)
+
+    fake_storage = MagicMock()
+    fake_storage.upload.return_value = "https://storage.test/onboarding/assets/product_photos/x.png"
+
+    with patch(_STORAGE_PATCH_TARGET, return_value=fake_storage):
+        response = client.post(
+            f"/brands/{brand.id}/onboarding/assets",
+            data={"slot": "product_photos"},
+            files={"file": ("photo.png", b"fake-bytes", "image/png")},
+            headers=_auth_headers(user),
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["slot"] == "product_photos"
+    assert body["url"] == "https://storage.test/onboarding/assets/product_photos/x.png"
+    assert body["filename"] == "photo.png"
+
+    listed = client.get(f"/brands/{brand.id}/onboarding/assets", headers=_auth_headers(user))
+    assert listed.status_code == 200
+    assert len(listed.json()) == 1
+
+
+@uses_test_session
+def test_reuploading_to_same_slot_replaces_it(db_session) -> None:
+    brand, user = _setup_brand(db_session)
+    fake_storage = MagicMock()
+
+    with patch(_STORAGE_PATCH_TARGET, return_value=fake_storage):
+        fake_storage.upload.return_value = "https://storage.test/first.png"
+        client.post(
+            f"/brands/{brand.id}/onboarding/assets",
+            data={"slot": "style_guide"},
+            files={"file": ("first.png", b"data-1", "image/png")},
+            headers=_auth_headers(user),
+        )
+
+        fake_storage.upload.return_value = "https://storage.test/second.png"
+        response = client.post(
+            f"/brands/{brand.id}/onboarding/assets",
+            data={"slot": "style_guide"},
+            files={"file": ("second.png", b"data-2", "image/png")},
+            headers=_auth_headers(user),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["url"] == "https://storage.test/second.png"
+
+    listed = client.get(f"/brands/{brand.id}/onboarding/assets", headers=_auth_headers(user))
+    assert len(listed.json()) == 1
+
+
+@uses_test_session
+def test_upload_onboarding_asset_rejects_unknown_slot(db_session) -> None:
+    brand, user = _setup_brand(db_session)
+
+    response = client.post(
+        f"/brands/{brand.id}/onboarding/assets",
+        data={"slot": "not_a_real_slot"},
+        files={"file": ("photo.png", b"data", "image/png")},
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 400

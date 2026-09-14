@@ -6,10 +6,14 @@ import {
   ApiError,
   completeOnboarding,
   fetchOnboarding,
+  fetchOnboardingAssets,
   streamOnboardingResearch,
+  transcribeOnboardingVoiceAnswer,
   updateBrand,
   uploadBrandLogo,
+  uploadOnboardingAsset,
   upsertOnboarding,
+  type OnboardingAsset,
   type ResearchStreamEvent,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -19,7 +23,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SocialConnectionsPanel } from "@/app/social-accounts/social-connections-panel";
 
-type QuestionType = "scrape" | "colors" | "chips" | "text" | "voice" | "upload";
+type QuestionType = "scrape" | "colors" | "chips" | "chipsSingle" | "text" | "voice" | "upload";
 
 interface Question {
   id: string;
@@ -47,6 +51,8 @@ const GOAL_CHIP_OPTIONS = [
   "Product launches",
   "Hiring",
 ];
+
+const CADENCE_OPTIONS = ["Daily", "A few times a week", "Weekly", "A few times a month"];
 
 const PRESET_COLORS = ["#1B4DFF", "#0A1633", "#0E7A4E", "#B46A00", "#6B32C9", "#C9295A"];
 
@@ -94,6 +100,24 @@ const QUESTIONS: Question[] = [
     sub: "Comma-separated is fine — Ved researches how you compare.",
   },
   {
+    id: "mission",
+    type: "text",
+    title: "What's your brand's mission, in one line?",
+    sub: "The thing you'd want on a billboard. Optional, but it sharpens everything Keshav and Kavi write.",
+  },
+  {
+    id: "contentDosDonts",
+    type: "text",
+    title: "Anything your content should never say or show?",
+    sub: "Comma-separated is fine — Neer holds every draft to this list.",
+  },
+  {
+    id: "postingCadence",
+    type: "chipsSingle",
+    title: "How often do you want to post?",
+    sub: "Keshav and Kavi plan around this — you can change it any time.",
+  },
+  {
     id: "assets",
     type: "upload",
     title: "Drop in anything that shows your brand at its best",
@@ -101,7 +125,12 @@ const QUESTIONS: Question[] = [
   },
 ];
 
-const UPLOAD_SLOTS = ["Product photos", "Team photos", "Past social posts", "Style guide"];
+const UPLOAD_SLOTS: { slot: string; label: string }[] = [
+  { slot: "product_photos", label: "Product photos" },
+  { slot: "team_photos", label: "Team photos" },
+  { slot: "past_social_posts", label: "Past social posts" },
+  { slot: "style_guide", label: "Style guide" },
+];
 
 function splitCommaList(value: string): string[] {
   return value
@@ -153,6 +182,9 @@ export default function OnboardingInterviewPage() {
   const [useTextFallback, setUseTextFallback] = useState(false);
   const [productDescription, setProductDescription] = useState("");
   const [competitorsText, setCompetitorsText] = useState("");
+  const [mission, setMission] = useState("");
+  const [contentDosDontsText, setContentDosDontsText] = useState("");
+  const [postingCadence, setPostingCadence] = useState("");
   const [colors, setColors] = useState<string[]>([]);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
 
@@ -160,6 +192,22 @@ export default function OnboardingInterviewPage() {
   const [isScraping, setIsScraping] = useState(false);
   const [scrapeDone, setScrapeDone] = useState(false);
   const scrapeAbortRef = useRef<AbortController | null>(null);
+
+  // Real mic recording (Issue #144) — MediaRecorder captures audio
+  // client-side; the recorded blob is uploaded to the backend, which
+  // transcribes it via the free, open-source, self-hosted Whisper
+  // provider (packages/integrations/speech) and returns the transcript.
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+
+  // Real asset uploads (Issue #144) — replaces the old decorative "+"
+  // slots with actual file pickers backed by OnboardingAsset rows.
+  const [assets, setAssets] = useState<OnboardingAsset[]>([]);
+  const [uploadingSlot, setUploadingSlot] = useState<string | null>(null);
 
   // Resume in-progress onboarding — prefill whatever's already been saved
   // rather than starting the questionnaire over from scratch. Deliberately
@@ -178,7 +226,10 @@ export default function OnboardingInterviewPage() {
     async function load() {
       if (!token || !selectedBrandId) return;
       try {
-        const [onboarding] = await Promise.all([fetchOnboarding(token, selectedBrandId)]);
+        const [onboarding, existingAssets] = await Promise.all([
+          fetchOnboarding(token, selectedBrandId),
+          fetchOnboardingAssets(token, selectedBrandId).catch(() => []),
+        ]);
         if (cancelled) return;
         if (onboarding) {
           if (onboarding.voice) setVoiceTone(splitCommaList(onboarding.voice));
@@ -188,7 +239,11 @@ export default function OnboardingInterviewPage() {
           }
           if (onboarding.competitors) setCompetitorsText(onboarding.competitors.join(", "));
           if (onboarding.goals) setGoals(onboarding.goals);
+          if (onboarding.mission) setMission(onboarding.mission);
+          if (onboarding.content_dos_donts) setContentDosDontsText(onboarding.content_dos_donts.join(", "));
+          if (onboarding.posting_cadence) setPostingCadence(onboarding.posting_cadence);
         }
+        setAssets(existingAssets);
         if (selectedBrand?.colors) setColors(selectedBrand.colors);
       } finally {
         if (!cancelled) setIsLoaded(true);
@@ -203,6 +258,14 @@ export default function OnboardingInterviewPage() {
   }, [token, selectedBrandId]);
 
   useEffect(() => () => scrapeAbortRef.current?.abort(), []);
+
+  useEffect(
+    () => () => {
+      mediaRecorderRef.current?.stop();
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    },
+    []
+  );
 
   const runScrape = useCallback(() => {
     if (!token || !selectedBrandId) return;
@@ -276,7 +339,10 @@ export default function OnboardingInterviewPage() {
     { label: "Audience", done: requiredAnswered.audience },
     { label: "What you offer", done: requiredAnswered.product },
     { label: "Competitors", done: requiredAnswered.competitors },
-    { label: "Brand assets (optional)", done: false, optional: true },
+    { label: "Mission (optional)", done: mission.trim().length > 0, optional: true },
+    { label: "Content dos/don'ts (optional)", done: contentDosDontsText.trim().length > 0, optional: true },
+    { label: "Posting cadence (optional)", done: postingCadence.length > 0, optional: true },
+    { label: "Brand assets (optional)", done: assets.length > 0, optional: true },
   ];
   const trackedCount = memoryItems.filter((item) => !item.optional).length;
   const doneCount = memoryItems.filter((item) => !item.optional && item.done).length;
@@ -307,6 +373,85 @@ export default function OnboardingInterviewPage() {
 
   const currentQuestion = QUESTIONS[stepIndex];
 
+  // Real mic recording + transcription (Issue #144). MediaRecorder
+  // captures audio client-side (no external service needed just to
+  // record); the recorded blob is sent to the backend, which transcribes
+  // it via the free, open-source, self-hosted Whisper provider and
+  // returns the transcript, which becomes this question's answer text —
+  // reviewable/editable before continuing, same as the typed fallback.
+  async function startRecording() {
+    setRecordingError(null);
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setUseTextFallback(true);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : undefined;
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+    } catch {
+      // Mic permission denied/unavailable — fall back to typing rather
+      // than leaving the question stuck.
+      setUseTextFallback(true);
+    }
+  }
+
+  function stopRecording() {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder) return;
+
+    const finished = new Promise<Blob>((resolve) => {
+      recorder.addEventListener(
+        "stop",
+        () => resolve(new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" })),
+        { once: true }
+      );
+    });
+    recorder.stop();
+    setIsRecording(false);
+
+    if (!token || !selectedBrandId) return;
+    setIsTranscribing(true);
+    finished
+      .then((blob) => transcribeOnboardingVoiceAnswer(token, selectedBrandId, currentQuestion.id, blob))
+      .then((answer) => {
+        setAudience(answer.transcript);
+      })
+      .catch((err) => {
+        setRecordingError(
+          err instanceof ApiError ? err.message : "Couldn't transcribe that — try again, or type your answer."
+        );
+      })
+      .finally(() => setIsTranscribing(false));
+  }
+
+  async function handleAssetUpload(slot: string, file: File | null) {
+    if (!file || !token || !selectedBrandId) return;
+    setUploadingSlot(slot);
+    try {
+      const asset = await uploadOnboardingAsset(token, selectedBrandId, slot, file);
+      setAssets((current) => [...current.filter((a) => a.slot !== slot), asset]);
+      pushToast("Uploaded.", "success");
+    } catch (err) {
+      pushToast(err instanceof ApiError ? err.message : "Failed to upload file", "error");
+    } finally {
+      setUploadingSlot(null);
+    }
+  }
+
+
   async function saveCurrentAnswer(): Promise<void> {
     if (!token || !selectedBrandId) return;
     setIsSaving(true);
@@ -333,6 +478,18 @@ export default function OnboardingInterviewPage() {
         case "competitors":
           if (competitorsText.trim())
             await upsertOnboarding(token, selectedBrandId, { competitors: splitCommaList(competitorsText) });
+          break;
+        case "mission":
+          if (mission.trim()) await upsertOnboarding(token, selectedBrandId, { mission: mission.trim() });
+          break;
+        case "contentDosDonts":
+          if (contentDosDontsText.trim())
+            await upsertOnboarding(token, selectedBrandId, {
+              content_dos_donts: splitCommaList(contentDosDontsText),
+            });
+          break;
+        case "postingCadence":
+          if (postingCadence) await upsertOnboarding(token, selectedBrandId, { posting_cadence: postingCadence });
           break;
         default:
           break;
@@ -661,14 +818,27 @@ export default function OnboardingInterviewPage() {
                   {!useTextFallback ? (
                     <>
                       <div className="flex items-center gap-[18px] rounded-[14px] border border-brand-100 bg-brand-50 p-5">
-                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xl text-white animate-rd-pulse">
-                          ●
-                        </div>
+                        <button
+                          type="button"
+                          onClick={isRecording ? stopRecording : startRecording}
+                          disabled={isTranscribing}
+                          aria-pressed={isRecording}
+                          aria-label={isRecording ? "Stop recording" : "Start recording"}
+                          className={
+                            "flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-xl text-white transition-colors " +
+                            (isRecording ? "bg-danger animate-rd-pulse" : "bg-brand-600 hover:bg-brand-700")
+                          }
+                        >
+                          {isRecording ? "■" : "●"}
+                        </button>
                         <div className="flex h-11 flex-1 items-center gap-[3px]">
                           {Array.from({ length: 32 }).map((_, index) => (
                             <i
                               key={index}
-                              className="flex-1 animate-rd-wave rounded-sm bg-brand-600 opacity-55"
+                              className={
+                                "flex-1 rounded-sm bg-brand-600 " +
+                                (isRecording ? "animate-rd-wave opacity-55" : "opacity-15")
+                              }
                               style={{
                                 height: `${20 + ((index * 37) % 60)}%`,
                                 animationDelay: `${(index % 8) * 0.1}s`,
@@ -678,7 +848,11 @@ export default function OnboardingInterviewPage() {
                         </div>
                       </div>
                       <p className="mt-3 text-xs text-ink-300">
-                        Recording is illustrative only — no audio is captured.{" "}
+                        {isTranscribing
+                          ? "Transcribing your answer…"
+                          : isRecording
+                            ? "Recording — tap the square to stop."
+                            : "Tap the mic to record your answer. Transcribed on our own server via an open-source model — nothing leaves our infrastructure."}{" "}
                         <button
                           type="button"
                           className="font-semibold text-brand-600"
@@ -687,6 +861,16 @@ export default function OnboardingInterviewPage() {
                           Prefer typing? Answer in text instead
                         </button>
                       </p>
+                      {recordingError && (
+                        <p role="alert" className="mt-2 text-xs font-medium text-danger">
+                          {recordingError}
+                        </p>
+                      )}
+                      {audience.trim() && (
+                        <div className="mt-3 rounded-[13px] border border-line-soft bg-white p-3.5 text-sm leading-relaxed text-ink-800">
+                          {audience}
+                        </div>
+                      )}
                     </>
                   ) : (
                     <textarea
@@ -701,32 +885,92 @@ export default function OnboardingInterviewPage() {
 
               {currentQuestion.type === "text" ? (
                 <textarea
-                  value={currentQuestion.id === "product" ? productDescription : competitorsText}
-                  onChange={(e) =>
+                  value={
                     currentQuestion.id === "product"
-                      ? setProductDescription(e.target.value)
-                      : setCompetitorsText(e.target.value)
+                      ? productDescription
+                      : currentQuestion.id === "competitors"
+                        ? competitorsText
+                        : currentQuestion.id === "mission"
+                          ? mission
+                          : contentDosDontsText
                   }
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (currentQuestion.id === "product") setProductDescription(value);
+                    else if (currentQuestion.id === "competitors") setCompetitorsText(value);
+                    else if (currentQuestion.id === "mission") setMission(value);
+                    else setContentDosDontsText(value);
+                  }}
                   placeholder={
                     currentQuestion.id === "competitors"
                       ? "e.g. Acme Corp, Widgetron"
-                      : "Type your answer — Aarav reads tone, not just words."
+                      : currentQuestion.id === "contentDosDonts"
+                        ? "e.g. Never joke about pricing, don't show competitor logos"
+                        : currentQuestion.id === "mission"
+                          ? "e.g. Make professional-grade tools every small team can afford."
+                          : "Type your answer — Aarav reads tone, not just words."
                   }
                   className="h-[132px] w-full resize-none rounded-[13px] border border-line bg-white p-3.5 text-sm leading-relaxed outline-none focus:border-brand-500"
                 />
               ) : null}
 
+              {currentQuestion.type === "chipsSingle" ? (
+                <div className="flex flex-wrap gap-2.5">
+                  {CADENCE_OPTIONS.map((option) => (
+                    <ChipButton
+                      key={option}
+                      label={option}
+                      selected={postingCadence === option}
+                      onClick={() => setPostingCadence(option)}
+                    />
+                  ))}
+                </div>
+              ) : null}
+
               {currentQuestion.type === "upload" ? (
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {UPLOAD_SLOTS.map((label) => (
-                    <div
-                      key={label}
-                      className="flex aspect-square flex-col items-center justify-center gap-1.5 rounded-[13px] border-[1.5px] border-dashed border-ink-100 bg-canvas p-2.5 text-center"
-                    >
-                      <span className="text-lg text-ink-100">＋</span>
-                      <span className="text-[11.5px] font-semibold leading-tight text-ink-500">{label}</span>
-                    </div>
-                  ))}
+                  {UPLOAD_SLOTS.map(({ slot, label }) => {
+                    const uploaded = assets.find((a) => a.slot === slot);
+                    const isUploading = uploadingSlot === slot;
+                    const isImage = uploaded?.content_type.startsWith("image/");
+                    return (
+                      <label
+                        key={slot}
+                        className={
+                          "flex aspect-square cursor-pointer flex-col items-center justify-center gap-1.5 overflow-hidden rounded-[13px] border-[1.5px] p-2.5 text-center " +
+                          (uploaded ? "border-solid border-brand-200 bg-brand-50" : "border-dashed border-ink-100 bg-canvas")
+                        }
+                      >
+                        {isUploading ? (
+                          <span className="text-[11.5px] font-semibold text-ink-500">Uploading…</span>
+                        ) : uploaded ? (
+                          isImage ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={uploaded.url} alt={uploaded.filename} className="h-full w-full object-cover" />
+                          ) : (
+                            <>
+                              <span className="text-lg">✓</span>
+                              <span className="line-clamp-2 text-[11px] font-semibold leading-tight text-ink-600">
+                                {uploaded.filename}
+                              </span>
+                            </>
+                          )
+                        ) : (
+                          <>
+                            <span className="text-lg text-ink-100">＋</span>
+                            <span className="text-[11.5px] font-semibold leading-tight text-ink-500">{label}</span>
+                          </>
+                        )}
+                        <input
+                          type="file"
+                          className="hidden"
+                          disabled={isUploading}
+                          aria-label={`Upload ${label}`}
+                          onChange={(e) => handleAssetUpload(slot, e.target.files?.[0] ?? null)}
+                        />
+                      </label>
+                    );
+                  })}
                 </div>
               ) : null}
 

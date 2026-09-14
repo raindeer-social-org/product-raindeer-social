@@ -555,6 +555,9 @@ export interface OnboardingUpsertInput {
   product_catalog?: Record<string, unknown> | null;
   competitors?: string[] | null;
   goals?: string[] | null;
+  mission?: string | null;
+  content_dos_donts?: string[] | null;
+  posting_cadence?: string | null;
 }
 
 // Mirrors apps/api/schemas/onboarding.py::OnboardingRead.
@@ -566,9 +569,36 @@ export interface OnboardingResponseData {
   product_catalog: Record<string, unknown> | null;
   competitors: string[] | null;
   goals: string[] | null;
+  mission: string | null;
+  content_dos_donts: string[] | null;
+  posting_cadence: string | null;
   is_complete: boolean;
   created_at: string;
   updated_at: string;
+}
+
+// Mirrors apps/api/schemas/onboarding.py::OnboardingVoiceAnswerRead.
+export interface OnboardingVoiceAnswer {
+  id: string;
+  brand_id: string;
+  question_id: string;
+  transcript: string;
+  audio_url: string;
+  language: string | null;
+  duration_seconds: number | null;
+  created_at: string;
+}
+
+// Mirrors apps/api/schemas/onboarding.py::OnboardingAssetRead. `slot` is
+// one of apps/api/models/onboarding_asset.py::ONBOARDING_ASSET_SLOTS.
+export interface OnboardingAsset {
+  id: string;
+  brand_id: string;
+  slot: string;
+  url: string;
+  filename: string;
+  content_type: string;
+  created_at: string;
 }
 
 // Mirrors apps/api/schemas/brand.py::BrandReportExport.
@@ -713,6 +743,72 @@ export async function streamOnboardingResearch(
       }
     }
   }
+}
+
+// --- Real voice recording + free open-source transcription (Issue #144) ---
+// apps/api/routers/onboarding.py::create_voice_answer takes a multipart
+// "file" field (the recorded audio) plus a "question_id" form field, same
+// convention as uploadBrandLogo's single "file" field above.
+export async function transcribeOnboardingVoiceAnswer(
+  token: string,
+  brandId: string,
+  questionId: string,
+  audioBlob: Blob
+): Promise<OnboardingVoiceAnswer> {
+  const formData = new FormData();
+  formData.append("question_id", questionId);
+  formData.append("file", audioBlob, "answer.webm");
+
+  const res = await fetch(onboardingUrl(brandId, "/voice-answers"), {
+    method: "POST",
+    headers: authHeaders(token),
+    body: formData,
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+// --- Real asset uploads (Issue #144) ---
+// `slot` is one of apps/api/models/onboarding_asset.py::ONBOARDING_ASSET_SLOTS
+// — re-uploading to an already-filled slot replaces it (same "one current
+// value per slot" model as the brand logo).
+export async function uploadOnboardingAsset(
+  token: string,
+  brandId: string,
+  slot: string,
+  file: File
+): Promise<OnboardingAsset> {
+  const formData = new FormData();
+  formData.append("slot", slot);
+  formData.append("file", file);
+
+  const res = await fetch(onboardingUrl(brandId, "/assets"), {
+    method: "POST",
+    headers: authHeaders(token),
+    body: formData,
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function fetchOnboardingAssets(token: string, brandId: string): Promise<OnboardingAsset[]> {
+  const res = await fetch(onboardingUrl(brandId, "/assets"), {
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
 }
 
 export async function exportBrandReport(

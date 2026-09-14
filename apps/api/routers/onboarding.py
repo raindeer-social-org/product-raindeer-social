@@ -2,19 +2,32 @@ import json
 import uuid
 from collections.abc import Generator
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from apps.api.auth.dependencies import CurrentUser, get_current_user
 from apps.api.config.database import get_db
 from apps.api.middleware.rbac import require_role
-from apps.api.models import Brand, OnboardingResponse, UserRole
+from apps.api.models import (
+    ONBOARDING_ASSET_SLOTS,
+    Brand,
+    OnboardingAsset,
+    OnboardingResponse,
+    OnboardingVoiceAnswer,
+    UserRole,
+)
 from apps.api.schemas.brand import BrandRead
-from apps.api.schemas.onboarding import OnboardingRead, OnboardingUpsert
+from apps.api.schemas.onboarding import (
+    OnboardingAssetRead,
+    OnboardingRead,
+    OnboardingUpsert,
+    OnboardingVoiceAnswerRead,
+)
 from packages.agents.onboarding.embedding import embed_brand_report
 from packages.agents.onboarding.graph import run_onboarding_agent
 from packages.agents.onboarding.research_step import run_onboarding_research, search_brand_overview
+from packages.integrations.registry import get_speech_provider, get_storage_provider
 
 router = APIRouter(prefix="/brands/{brand_id}/onboarding", tags=["onboarding"])
 
@@ -178,3 +191,123 @@ def run_agent(
     # replaces this brand's existing chunks rather than appending to them.
     embed_brand_report(db, brand)
     return brand
+
+
+# --- Real voice recording + free open-source transcription (Issue #144) ---
+# Replaces the interview's old "voice" question, which recorded nothing at
+# all ("Recording is illustrative only — no audio is captured").
+
+
+@router.post("/voice-answers", response_model=OnboardingVoiceAnswerRead)
+def create_voice_answer(
+    brand_id: uuid.UUID,
+    question_id: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_role(*WRITE_ROLES)),
+) -> OnboardingVoiceAnswer:
+    """Transcribes a recorded onboarding answer via SpeechToTextProvider
+    (packages/integrations/speech — faster-whisper, free and fully
+    open-source, no API key/cost) and durably stores both the raw audio
+    (via StorageProvider, same as brand logos/generated media) and the
+    transcript — "everything voice" persisted, not discarded once read.
+    Every take is appended as its own row (see OnboardingVoiceAnswer's
+    docstring) rather than overwriting a prior recording for the same
+    question."""
+    brand = _get_org_brand(db, brand_id, current_user.org_id)
+    audio_bytes = file.file.read()
+    content_type = file.content_type or "audio/webm"
+
+    result = get_speech_provider().transcribe(audio_bytes, content_type)
+
+    extension = content_type.split("/")[-1].split(";")[0] or "webm"
+    path = f"onboarding/{brand.id}/voice/{question_id}/{uuid.uuid4().hex}.{extension}"
+    audio_url = get_storage_provider().upload(path, audio_bytes, content_type)
+
+    answer = OnboardingVoiceAnswer(
+        brand_id=brand.id,
+        question_id=question_id,
+        transcript=result.text,
+        audio_url=audio_url,
+        language=result.language,
+        duration_seconds=result.duration_seconds,
+    )
+    db.add(answer)
+    db.flush()
+    db.refresh(answer)
+    return answer
+
+
+@router.get("/voice-answers", response_model=list[OnboardingVoiceAnswerRead])
+def list_voice_answers(
+    brand_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> list[OnboardingVoiceAnswer]:
+    _get_org_brand(db, brand_id, current_user.org_id)
+    return (
+        db.query(OnboardingVoiceAnswer)
+        .filter(OnboardingVoiceAnswer.brand_id == brand_id)
+        .order_by(OnboardingVoiceAnswer.created_at)
+        .all()
+    )
+
+
+# --- Real asset uploads (Issue #144) ---
+# Replaces the interview's old 4 upload slots, which were decorative divs
+# wired to no file input at all.
+
+
+@router.post("/assets", response_model=OnboardingAssetRead)
+def upload_onboarding_asset(
+    brand_id: uuid.UUID,
+    slot: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_role(*WRITE_ROLES)),
+) -> OnboardingAsset:
+    if slot not in ONBOARDING_ASSET_SLOTS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown slot {slot!r}. Valid options: {sorted(ONBOARDING_ASSET_SLOTS)}",
+        )
+    brand = _get_org_brand(db, brand_id, current_user.org_id)
+    content = file.file.read()
+    content_type = file.content_type or "application/octet-stream"
+    filename = file.filename or slot
+
+    path = f"onboarding/{brand.id}/assets/{slot}/{uuid.uuid4().hex}-{filename}"
+    url = get_storage_provider().upload(path, content, content_type)
+
+    asset = (
+        db.query(OnboardingAsset)
+        .filter(OnboardingAsset.brand_id == brand.id, OnboardingAsset.slot == slot)
+        .first()
+    )
+    if asset is None:
+        asset = OnboardingAsset(brand_id=brand.id, slot=slot, url=url, filename=filename, content_type=content_type)
+        db.add(asset)
+    else:
+        # Re-uploading to an already-filled slot replaces it — one current
+        # value per slot, same model as Brand.logo_url.
+        asset.url = url
+        asset.filename = filename
+        asset.content_type = content_type
+    db.flush()
+    db.refresh(asset)
+    return asset
+
+
+@router.get("/assets", response_model=list[OnboardingAssetRead])
+def list_onboarding_assets(
+    brand_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> list[OnboardingAsset]:
+    _get_org_brand(db, brand_id, current_user.org_id)
+    return (
+        db.query(OnboardingAsset)
+        .filter(OnboardingAsset.brand_id == brand_id)
+        .order_by(OnboardingAsset.created_at)
+        .all()
+    )

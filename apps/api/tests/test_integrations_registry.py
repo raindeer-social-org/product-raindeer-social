@@ -9,9 +9,11 @@ from packages.integrations.registry import (
     get_llm_provider,
     get_search_provider,
     get_social_oauth_provider,
+    get_speech_provider,
 )
 from packages.integrations.search.tavily import TavilyProvider
 from packages.integrations.social.linkedin_provider import LinkedInProvider
+from packages.integrations.speech.whisper_provider import WhisperSpeechProvider
 
 
 @pytest.fixture(autouse=True)
@@ -63,3 +65,19 @@ def test_unknown_embedding_provider_raises(monkeypatch) -> None:
     monkeypatch.setenv("EMBEDDING_PROVIDER", "cohere")
     with pytest.raises(ValueError, match="Unknown EMBEDDING_PROVIDER"):
         get_embedding_provider()
+
+
+def test_get_speech_provider_defaults_to_whisper() -> None:
+    # Constructing the adapter never loads the actual model — Whisper
+    # model weights are loaded lazily, only on the first transcribe()
+    # call (see whisper_provider.py's module-level _MODEL_CACHE) — so this
+    # stays a fast, offline unit test.
+    provider = get_speech_provider()
+    assert isinstance(provider, WhisperSpeechProvider)
+    assert provider.model_size == "base"
+
+
+def test_unknown_speech_provider_raises(monkeypatch) -> None:
+    monkeypatch.setenv("SPEECH_PROVIDER", "deepgram")
+    with pytest.raises(ValueError, match="Unknown SPEECH_PROVIDER"):
+        get_speech_provider()
