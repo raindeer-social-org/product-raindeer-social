@@ -9,8 +9,14 @@ from packages.integrations.llm.openrouter_provider import OpenRouterProvider
 from packages.integrations.search.base import SearchProvider
 from packages.integrations.search.tavily import TavilyProvider
 from packages.integrations.social.base import SocialOAuthProvider, SocialPublisher
+from packages.integrations.social.facebook_provider import FacebookProvider
+from packages.integrations.social.instagram_provider import InstagramProvider
 from packages.integrations.social.linkedin_provider import LinkedInProvider
+from packages.integrations.social.pinterest_provider import PinterestProvider
+from packages.integrations.social.threads_provider import ThreadsProvider
+from packages.integrations.social.tiktok_provider import TikTokProvider
 from packages.integrations.social.x_provider import XProvider
+from packages.integrations.social.youtube_provider import YouTubeProvider
 from packages.integrations.storage.base import StorageProvider
 from packages.integrations.storage.supabase_provider import SupabaseStorageProvider
 from packages.integrations.video_gen.base import VideoProvider
@@ -31,6 +37,45 @@ _EMBEDDING_PROVIDERS = {
     "openai": lambda settings: OpenAIEmbeddingProvider(api_key=settings.openai_api_key or ""),
 }
 
+def _facebook(settings):
+    return FacebookProvider(
+        client_id=settings.meta_app_id or "", client_secret=settings.meta_app_secret or ""
+    )
+
+
+def _instagram(settings):
+    return InstagramProvider(
+        client_id=settings.meta_app_id or "", client_secret=settings.meta_app_secret or ""
+    )
+
+
+def _threads(settings):
+    return ThreadsProvider(
+        client_id=settings.meta_app_id or "", client_secret=settings.meta_app_secret or ""
+    )
+
+
+def _youtube(settings):
+    return YouTubeProvider(
+        client_id=settings.youtube_client_id or "",
+        client_secret=settings.youtube_client_secret or "",
+    )
+
+
+def _tiktok(settings):
+    return TikTokProvider(
+        client_key=settings.tiktok_client_key or "",
+        client_secret=settings.tiktok_client_secret or "",
+    )
+
+
+def _pinterest(settings):
+    return PinterestProvider(
+        client_id=settings.pinterest_app_id or "",
+        client_secret=settings.pinterest_app_secret or "",
+    )
+
+
 _SOCIAL_OAUTH_PROVIDERS = {
     "linkedin": lambda settings: LinkedInProvider(
         client_id=settings.linkedin_client_id or "",
@@ -40,6 +85,12 @@ _SOCIAL_OAUTH_PROVIDERS = {
         client_id=settings.x_client_id or "",
         client_secret=settings.x_client_secret or "",
     ),
+    "facebook": _facebook,
+    "instagram": _instagram,
+    "threads": _threads,
+    "youtube": _youtube,
+    "tiktok": _tiktok,
+    "pinterest": _pinterest,
 }
 
 # Every publisher is currently the same adapter instance that also
@@ -56,6 +107,12 @@ _SOCIAL_PUBLISHERS = {
         client_id=settings.x_client_id or "",
         client_secret=settings.x_client_secret or "",
     ),
+    "facebook": _facebook,
+    "instagram": _instagram,
+    "threads": _threads,
+    "youtube": _youtube,
+    "tiktok": _tiktok,
+    "pinterest": _pinterest,
 }
 
 _STORAGE_PROVIDERS = {

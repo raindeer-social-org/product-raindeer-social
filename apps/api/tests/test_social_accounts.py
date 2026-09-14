@@ -98,7 +98,7 @@ def test_callback_stores_tokens_encrypted_not_plaintext(db_session) -> None:
     from apps.api.routers.social_accounts import _create_state
 
     brand, _user = _setup_brand(db_session)
-    state = _create_state(brand.id)
+    state = _create_state(brand.id, "linkedin")
 
     fake_tokens = SocialTokens(
         access_token="super-secret-access-token",
@@ -149,9 +149,9 @@ def test_callback_reconnect_upserts_same_row(db_session) -> None:
 
     with patch("apps.api.routers.social_accounts.get_social_oauth_provider") as mock_provider:
         mock_provider.return_value.exchange_code.return_value = tokens_v1
-        client.get("/oauth/linkedin/callback", params={"code": "c1", "state": _create_state(brand.id)})
+        client.get("/oauth/linkedin/callback", params={"code": "c1", "state": _create_state(brand.id, "linkedin")})
         mock_provider.return_value.exchange_code.return_value = tokens_v2
-        client.get("/oauth/linkedin/callback", params={"code": "c2", "state": _create_state(brand.id)})
+        client.get("/oauth/linkedin/callback", params={"code": "c2", "state": _create_state(brand.id, "linkedin")})
 
     accounts = db_session.query(SocialAccount).filter(SocialAccount.brand_id == brand.id).all()
     assert len(accounts) == 1
@@ -241,3 +241,152 @@ def test_cross_org_social_account_access_returns_404(db_session) -> None:
     )
 
     assert response.status_code == 404
+
+
+@uses_test_session
+def test_connect_instagram_returns_authorize_url_with_signed_state(db_session, monkeypatch) -> None:
+    from apps.api.config import get_settings
+
+    monkeypatch.setenv("INSTAGRAM_REDIRECT_URI", "http://localhost:8000/oauth/instagram/callback")
+    get_settings.cache_clear()
+    brand, user = _setup_brand(db_session)
+
+    response = client.post(
+        f"/brands/{brand.id}/social-accounts/instagram/connect", headers=_auth_headers(user)
+    )
+    get_settings.cache_clear()
+
+    assert response.status_code == 200
+    assert "state=" in response.json()["authorize_url"]
+
+
+@uses_test_session
+def test_connect_503_when_youtube_not_configured(db_session, monkeypatch) -> None:
+    from apps.api.config import get_settings
+
+    monkeypatch.setenv("YOUTUBE_REDIRECT_URI", "")
+    get_settings.cache_clear()
+    brand, user = _setup_brand(db_session)
+
+    response = client.post(
+        f"/brands/{brand.id}/social-accounts/youtube/connect", headers=_auth_headers(user)
+    )
+    get_settings.cache_clear()
+
+    assert response.status_code == 503
+
+
+@uses_test_session
+def test_tiktok_callback_passes_state_as_pkce_code_verifier(db_session, monkeypatch) -> None:
+    from apps.api.config import get_settings
+    from apps.api.routers.social_accounts import _create_state
+
+    monkeypatch.setenv("TIKTOK_REDIRECT_URI", "http://localhost:8000/oauth/tiktok/callback")
+    get_settings.cache_clear()
+
+    brand, _user = _setup_brand(db_session)
+    state = _create_state(brand.id, "tiktok")
+    fake_tokens = SocialTokens(
+        access_token="token", refresh_token=None, expires_at=None,
+        scopes=["video.publish"], external_account_id="tiktok-user-1",
+    )
+
+    with patch("apps.api.routers.social_accounts.get_social_oauth_provider") as mock_provider:
+        mock_provider.return_value.exchange_code.return_value = fake_tokens
+        response = client.get("/oauth/tiktok/callback", params={"code": "auth-code", "state": state})
+        get_settings.cache_clear()
+
+        mock_provider.return_value.exchange_code.assert_called_once_with(
+            code="auth-code",
+            redirect_uri="http://localhost:8000/oauth/tiktok/callback",
+            code_verifier=state,
+        )
+
+    assert response.status_code == 200
+    account = (
+        db_session.query(SocialAccount)
+        .filter(SocialAccount.brand_id == brand.id, SocialAccount.platform == SocialPlatform.TIKTOK)
+        .one()
+    )
+    assert account.external_account_id == "tiktok-user-1"
+
+
+@uses_test_session
+def test_non_pkce_callback_does_not_pass_code_verifier(db_session, monkeypatch) -> None:
+    from apps.api.config import get_settings
+    from apps.api.routers.social_accounts import _create_state
+
+    monkeypatch.setenv("FACEBOOK_REDIRECT_URI", "http://localhost:8000/oauth/facebook/callback")
+    get_settings.cache_clear()
+
+    brand, _user = _setup_brand(db_session)
+    state = _create_state(brand.id, "facebook")
+    fake_tokens = SocialTokens(
+        access_token="token", refresh_token=None, expires_at=None,
+        scopes=["pages_manage_posts"], external_account_id="page-1",
+    )
+
+    with patch("apps.api.routers.social_accounts.get_social_oauth_provider") as mock_provider:
+        mock_provider.return_value.exchange_code.return_value = fake_tokens
+        client.get("/oauth/facebook/callback", params={"code": "auth-code", "state": state})
+        get_settings.cache_clear()
+
+        mock_provider.return_value.exchange_code.assert_called_once_with(
+            code="auth-code",
+            redirect_uri="http://localhost:8000/oauth/facebook/callback",
+            code_verifier=None,
+        )
+
+
+@uses_test_session
+def test_state_from_one_platform_rejected_by_another_platforms_callback(db_session, monkeypatch) -> None:
+    from apps.api.config import get_settings
+    from apps.api.routers.social_accounts import _create_state
+
+    monkeypatch.setenv("INSTAGRAM_REDIRECT_URI", "http://localhost:8000/oauth/instagram/callback")
+    get_settings.cache_clear()
+
+    brand, _user = _setup_brand(db_session)
+    linkedin_state = _create_state(brand.id, "linkedin")
+
+    response = client.get(
+        "/oauth/instagram/callback", params={"code": "auth-code", "state": linkedin_state}
+    )
+    get_settings.cache_clear()
+
+    assert response.status_code == 400
+
+
+@uses_test_session
+def test_reconnecting_different_platforms_creates_separate_rows(db_session, monkeypatch) -> None:
+    from apps.api.config import get_settings
+    from apps.api.routers.social_accounts import _create_state
+
+    monkeypatch.setenv("PINTEREST_REDIRECT_URI", "http://localhost:8000/oauth/pinterest/callback")
+    get_settings.cache_clear()
+
+    brand, _user = _setup_brand(db_session)
+    linkedin_tokens = SocialTokens(
+        access_token="li-token", refresh_token=None, expires_at=None,
+        scopes=["openid"], external_account_id="member-1",
+    )
+    pinterest_tokens = SocialTokens(
+        access_token="pin-token", refresh_token=None, expires_at=None,
+        scopes=["pins:write"], external_account_id="acme",
+    )
+
+    with patch("apps.api.routers.social_accounts.get_social_oauth_provider") as mock_provider:
+        mock_provider.return_value.exchange_code.return_value = linkedin_tokens
+        client.get(
+            "/oauth/linkedin/callback",
+            params={"code": "c1", "state": _create_state(brand.id, "linkedin")},
+        )
+        mock_provider.return_value.exchange_code.return_value = pinterest_tokens
+        client.get(
+            "/oauth/pinterest/callback",
+            params={"code": "c2", "state": _create_state(brand.id, "pinterest")},
+        )
+        get_settings.cache_clear()
+
+    accounts = db_session.query(SocialAccount).filter(SocialAccount.brand_id == brand.id).all()
+    assert {account.platform for account in accounts} == {SocialPlatform.LINKEDIN, SocialPlatform.PINTEREST}
