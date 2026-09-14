@@ -30,6 +30,18 @@ def _serialize(results: list[SearchResult]) -> list[dict]:
     return [{"title": r.title, "url": r.url, "content": r.content} for r in results]
 
 
+def search_brand_overview(brand_name: str) -> list[SearchResult]:
+    """Public wrapper around the same safe-search path run_onboarding_research
+    uses for "{brand} company overview" below. Added for Issue #123's Aarav
+    onboarding interview, which previews real web-research signals for a
+    brand (via a live progress stream) before the full questionnaire —
+    and thus the full run_onboarding_research/run_agent chain, which
+    requires onboarding to already be marked complete — can run. Kept as a
+    thin named export rather than having callers reach for the
+    underscore-prefixed helper directly."""
+    return _search_safely(f"{brand_name} company overview")
+
+
 def run_onboarding_research(
     db: Session, brand: Brand, onboarding_response: OnboardingResponse
 ) -> OnboardingResearch:

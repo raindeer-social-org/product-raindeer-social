@@ -99,6 +99,9 @@ def run_onboarding_agent(
             "product_catalog": onboarding_response.product_catalog,
             "competitors": onboarding_response.competitors,
             "goals": onboarding_response.goals,
+            "mission": onboarding_response.mission,
+            "content_dos_donts": onboarding_response.content_dos_donts,
+            "posting_cadence": onboarding_response.posting_cadence,
         },
         research={
             "brand_overview": research.brand_overview if research else [],

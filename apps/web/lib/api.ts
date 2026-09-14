@@ -194,6 +194,31 @@ export async function login(email: string, password: string): Promise<LoginRespo
   return res.json();
 }
 
+// Mirrors apps/api/auth/router.py::RegisterRequest (Issue #123, signup
+// step 1 of 3). first_name/last_name aren't stored on User today — the
+// backend only uses them to seed a human-readable Organization name — but
+// they're still real request fields, not decoration this client drops.
+export interface RegisterInput {
+  first_name: string;
+  last_name: string;
+  email: string;
+  password: string;
+}
+
+export async function register(payload: RegisterInput): Promise<LoginResponse> {
+  const res = await fetch(`${API_URL}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
 export async function fetchBrands(token: string): Promise<Brand[]> {
   const res = await fetch(`${API_URL}/brands`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -698,6 +723,9 @@ export interface OnboardingUpsertInput {
   product_catalog?: Record<string, unknown> | null;
   competitors?: string[] | null;
   goals?: string[] | null;
+  mission?: string | null;
+  content_dos_donts?: string[] | null;
+  posting_cadence?: string | null;
 }
 
 // Mirrors apps/api/schemas/onboarding.py::OnboardingRead.
@@ -709,9 +737,36 @@ export interface OnboardingResponseData {
   product_catalog: Record<string, unknown> | null;
   competitors: string[] | null;
   goals: string[] | null;
+  mission: string | null;
+  content_dos_donts: string[] | null;
+  posting_cadence: string | null;
   is_complete: boolean;
   created_at: string;
   updated_at: string;
+}
+
+// Mirrors apps/api/schemas/onboarding.py::OnboardingVoiceAnswerRead.
+export interface OnboardingVoiceAnswer {
+  id: string;
+  brand_id: string;
+  question_id: string;
+  transcript: string;
+  audio_url: string;
+  language: string | null;
+  duration_seconds: number | null;
+  created_at: string;
+}
+
+// Mirrors apps/api/schemas/onboarding.py::OnboardingAssetRead. `slot` is
+// one of apps/api/models/onboarding_asset.py::ONBOARDING_ASSET_SLOTS.
+export interface OnboardingAsset {
+  id: string;
+  brand_id: string;
+  slot: string;
+  url: string;
+  filename: string;
+  content_type: string;
+  created_at: string;
 }
 
 // Mirrors apps/api/schemas/brand.py::BrandReportExport.
@@ -787,6 +842,133 @@ export async function completeOnboarding(
 export async function runOnboardingAgent(token: string, brandId: string): Promise<Brand> {
   const res = await fetch(onboardingUrl(brandId, "/run-agent"), {
     method: "POST",
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+// Mirrors the events apps/api/routers/onboarding.py::stream_research_preview
+// emits ("log"/"signal"/"done"), each carrying a small JSON `data` payload
+// ({text} for log, {title,url} for signal, {count} for done).
+export interface ResearchStreamEvent {
+  event: "log" | "signal" | "done";
+  data: Record<string, unknown>;
+}
+
+// Reads the onboarding research-preview SSE stream (Issue #123's Aarav
+// interview "scrape" question). Deliberately uses fetch + a manual
+// "event: x\ndata: {...}\n\n" parser rather than the browser's EventSource
+// — EventSource can't attach an Authorization header, and every other
+// endpoint in this file is a bearer-token GET. Resolves once the stream
+// ends (after the backend's "done" event closes the response body).
+export async function streamOnboardingResearch(
+  token: string,
+  brandId: string,
+  onEvent: (event: ResearchStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const res = await fetch(onboardingUrl(brandId, "/research-stream"), {
+    headers: authHeaders(token),
+    signal,
+  });
+
+  if (!res.ok || !res.body) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary !== -1) {
+      const rawEvent = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      boundary = buffer.indexOf("\n\n");
+
+      let eventName = "message";
+      let data = "";
+      for (const line of rawEvent.split("\n")) {
+        if (line.startsWith("event:")) eventName = line.slice(6).trim();
+        else if (line.startsWith("data:")) data = line.slice(5).trim();
+      }
+      if (!data) continue;
+      try {
+        onEvent({ event: eventName as ResearchStreamEvent["event"], data: JSON.parse(data) });
+      } catch {
+        // Malformed chunk (shouldn't happen against our own backend) —
+        // skip it rather than take the whole stream down.
+      }
+    }
+  }
+}
+
+// --- Real voice recording + free open-source transcription (Issue #144) ---
+// apps/api/routers/onboarding.py::create_voice_answer takes a multipart
+// "file" field (the recorded audio) plus a "question_id" form field, same
+// convention as uploadBrandLogo's single "file" field above.
+export async function transcribeOnboardingVoiceAnswer(
+  token: string,
+  brandId: string,
+  questionId: string,
+  audioBlob: Blob
+): Promise<OnboardingVoiceAnswer> {
+  const formData = new FormData();
+  formData.append("question_id", questionId);
+  formData.append("file", audioBlob, "answer.webm");
+
+  const res = await fetch(onboardingUrl(brandId, "/voice-answers"), {
+    method: "POST",
+    headers: authHeaders(token),
+    body: formData,
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+// --- Real asset uploads (Issue #144) ---
+// `slot` is one of apps/api/models/onboarding_asset.py::ONBOARDING_ASSET_SLOTS
+// — re-uploading to an already-filled slot replaces it (same "one current
+// value per slot" model as the brand logo).
+export async function uploadOnboardingAsset(
+  token: string,
+  brandId: string,
+  slot: string,
+  file: File
+): Promise<OnboardingAsset> {
+  const formData = new FormData();
+  formData.append("slot", slot);
+  formData.append("file", file);
+
+  const res = await fetch(onboardingUrl(brandId, "/assets"), {
+    method: "POST",
+    headers: authHeaders(token),
+    body: formData,
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function fetchOnboardingAssets(token: string, brandId: string): Promise<OnboardingAsset[]> {
+  const res = await fetch(onboardingUrl(brandId, "/assets"), {
     headers: authHeaders(token),
   });
 
