@@ -229,7 +229,7 @@ def _connect_platform(
         )
 
     provider = get_social_oauth_provider(platform)
-    state = _create_state(brand_id)
+    state = _create_state(brand_id, platform)
     url = provider.authorize_url(state=state, redirect_uri=redirect_uri)
     return AuthorizeUrlRead(authorize_url=url)
 
@@ -245,7 +245,7 @@ def _platform_callback(
     """Shared body for the Instagram/Threads/Facebook OAuth callbacks below
     — identical in shape to linkedin_callback above, just parameterized by
     platform since all three are wired the same way."""
-    brand_id = _verify_state(state)
+    brand_id = _verify_state(state, platform)
     provider = get_social_oauth_provider(platform)
     tokens = provider.exchange_code(code=code, redirect_uri=redirect_uri or "")
 

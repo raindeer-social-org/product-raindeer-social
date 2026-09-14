@@ -364,8 +364,7 @@ export async function rescheduleReviewPost(
 // --- Social accounts (Issue #91) ---
 
 // Mirrors apps/api/models/social_account.py::SocialPlatform.
-export type SocialPlatform = "linkedin" | "x";
-export type SocialPlatform = "linkedin" | "instagram" | "threads" | "facebook";
+export type SocialPlatform = "linkedin" | "x" | "instagram" | "threads" | "facebook";
 
 // Mirrors apps/api/models/social_account.py::SocialAccountStatus.
 export type SocialAccountStatus = "active" | "expired" | "revoked";
@@ -430,6 +429,17 @@ export async function connectLinkedIn(token: string, brandId: string): Promise<A
 // apps/api/routers/social_accounts.py::connect_x.
 export async function connectX(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
   const res = await fetch(socialAccountsUrl(brandId, "/x/connect"), {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
 // Starts the Instagram/Threads/Facebook OAuth flows — same shape as
 // connectLinkedIn above (see apps/api/routers/social_accounts.py's
 // connect_instagram/connect_threads/connect_facebook, which are all thin

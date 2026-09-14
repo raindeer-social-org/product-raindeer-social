@@ -42,10 +42,6 @@ function platformLabel(platform: SocialPlatform): string {
   return PLATFORM_LABELS[platform] ?? platform;
 }
 
-// Platforms the UI can start a connect flow for — a list plus a lookup
-// table (not hardcoded per-platform buttons/handlers) so adding one more
-// provider is a data change here rather than a rewrite of this page.
-const CONNECTABLE_PLATFORMS: SocialPlatform[] = ["linkedin", "x"];
 function IconLinkedIn() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -112,7 +108,7 @@ const PLATFORM_ICONS: Partial<Record<SocialPlatform, () => ReactNode>> = {
 // Platforms the UI can start a connect flow for, plus a lookup table (not
 // hardcoded per-platform buttons/handlers) so adding one more provider is a
 // data change here rather than a rewrite of this page.
-const CONNECTABLE_PLATFORMS: SocialPlatform[] = ["linkedin", "instagram", "threads", "facebook"];
+const CONNECTABLE_PLATFORMS: SocialPlatform[] = ["linkedin", "x", "instagram", "threads", "facebook"];
 
 const CONNECT_HANDLERS: Partial<
   Record<SocialPlatform, (token: string, brandId: string) => Promise<AuthorizeUrlResponse>>

@@ -167,12 +167,6 @@ describe("SocialAccountsPage", () => {
     connectXMock.mockResolvedValue({
       authorize_url: "https://twitter.com/i/oauth2/authorize?foo=bar",
     });
-  it.each([
-    ["Instagram", connectInstagramMock, "https://www.facebook.com/v21.0/dialog/oauth?foo=bar"],
-    ["Threads", connectThreadsMock, "https://threads.net/oauth/authorize?foo=bar"],
-    ["Facebook", connectFacebookMock, "https://www.facebook.com/v21.0/dialog/oauth?foo=bar"],
-  ])("starts the %s OAuth flow and redirects to the authorize URL on success", async (label, mock, authorizeUrl) => {
-    mock.mockResolvedValue({ authorize_url: authorizeUrl });
     const user = userEvent.setup();
 
     renderPage();
@@ -187,6 +181,17 @@ describe("SocialAccountsPage", () => {
       );
     });
   });
+
+  it.each([
+    ["Instagram", connectInstagramMock, "https://www.facebook.com/v21.0/dialog/oauth?foo=bar"],
+    ["Threads", connectThreadsMock, "https://threads.net/oauth/authorize?foo=bar"],
+    ["Facebook", connectFacebookMock, "https://www.facebook.com/v21.0/dialog/oauth?foo=bar"],
+  ])("starts the %s OAuth flow and redirects to the authorize URL on success", async (label, mock, authorizeUrl) => {
+    mock.mockResolvedValue({ authorize_url: authorizeUrl });
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(fetchSocialAccountsMock).toHaveBeenCalled());
 
     await user.click(screen.getByRole("button", { name: `Connect ${label}` }));
 

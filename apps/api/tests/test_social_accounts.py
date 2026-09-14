@@ -333,7 +333,7 @@ def test_meta_platform_callback_stores_tokens_encrypted_not_plaintext(
     from apps.api.routers.social_accounts import _create_state
 
     brand, _user = _setup_brand(db_session, suffix=f"-{platform}")
-    state = _create_state(brand.id)
+    state = _create_state(brand.id, platform)
 
     fake_tokens = SocialTokens(
         access_token="super-secret-access-token",
