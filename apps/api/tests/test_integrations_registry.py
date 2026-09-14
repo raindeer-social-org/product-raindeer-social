@@ -11,7 +11,10 @@ from packages.integrations.registry import (
     get_social_oauth_provider,
 )
 from packages.integrations.search.tavily import TavilyProvider
+from packages.integrations.social.facebook_provider import FacebookProvider
+from packages.integrations.social.instagram_provider import InstagramProvider
 from packages.integrations.social.linkedin_provider import LinkedInProvider
+from packages.integrations.social.threads_provider import ThreadsProvider
 
 
 @pytest.fixture(autouse=True)
@@ -53,6 +56,32 @@ def test_get_social_oauth_provider_resolves_linkedin() -> None:
 def test_unknown_social_platform_raises() -> None:
     with pytest.raises(ValueError, match="Unknown social platform"):
         get_social_oauth_provider("tiktok")
+
+
+def test_get_social_oauth_provider_resolves_instagram() -> None:
+    assert isinstance(get_social_oauth_provider("instagram"), InstagramProvider)
+
+
+def test_get_social_oauth_provider_resolves_threads() -> None:
+    assert isinstance(get_social_oauth_provider("threads"), ThreadsProvider)
+
+
+def test_get_social_oauth_provider_resolves_facebook() -> None:
+    assert isinstance(get_social_oauth_provider("facebook"), FacebookProvider)
+
+
+def test_meta_oauth_providers_share_meta_app_credentials(monkeypatch) -> None:
+    # Issue #108/#109/#110: Instagram/Threads/Facebook are all Meta Graph
+    # API products registered under one Meta developer app, so they read
+    # META_APP_ID/META_APP_SECRET rather than each getting a dedicated
+    # client id/secret pair the way LinkedIn/X do.
+    monkeypatch.setenv("META_APP_ID", "shared-app-id")
+    monkeypatch.setenv("META_APP_SECRET", "shared-app-secret")
+
+    for platform in ("instagram", "threads", "facebook"):
+        provider = get_social_oauth_provider(platform)
+        assert provider.client_id == "shared-app-id"
+        assert provider.client_secret == "shared-app-secret"
 
 
 def test_get_embedding_provider_defaults_to_openai() -> None:

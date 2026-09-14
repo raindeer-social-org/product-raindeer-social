@@ -65,7 +65,15 @@ class XProvider(SocialOAuthProvider, SocialPublisher):
         }
         return f"{self.AUTHORIZE_URL}?{urlencode(params)}"
 
-    def exchange_code(self, code: str, redirect_uri: str) -> SocialTokens:
+    def exchange_code(
+        self, code: str, redirect_uri: str, code_verifier: str | None = None
+    ) -> SocialTokens:
+        if not code_verifier:
+            # PKCE "plain" requires code_verifier == the code_challenge sent
+            # to authorize_url (state, per this class's docstring) — X
+            # rejects the exchange outright without it, so fail fast with a
+            # clear message rather than sending a mismatched value.
+            raise ValueError("XProvider.exchange_code requires code_verifier (the original state)")
         with track_integration_call("x", "oauth_exchange"):
             response = httpx.post(
                 self.TOKEN_URL,
@@ -74,7 +82,7 @@ class XProvider(SocialOAuthProvider, SocialPublisher):
                     "code": code,
                     "redirect_uri": redirect_uri,
                     "client_id": self.client_id,
-                    "code_verifier": redirect_uri,
+                    "code_verifier": code_verifier,
                 },
                 headers={
                     "Content-Type": "application/x-www-form-urlencoded",
