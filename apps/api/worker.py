@@ -9,6 +9,7 @@ from apps.api.models.brand import Brand
 from apps.api.services import engagement_polling, publish_queue
 from apps.api.models import Post
 from apps.api.services import engagement_polling, notifications, publish_queue
+from packages.agents.pipeline.nodes.research_engine import run_standalone_brand_research
 from packages.agents.pipeline.trigger import trigger_due_pipelines
 from packages.agents.reporting.weekly_report import generate_weekly_report
 
@@ -43,6 +44,20 @@ ENGAGEMENT_POLL_INTERVAL_SECONDS = 900.0
 # unit-testable without any Celery machinery.
 WEEKLY_REPORT_INTERVAL_SECONDS = 7 * 24 * 60 * 60.0
 
+# Issue #105: on a recurring schedule, run Ved's Research Engine
+# (packages/agents/pipeline/nodes/research_engine.py) for every active
+# brand, independent of whether a post happens to be scheduled onto the
+# calendar — the #29 trigger below only researches a brand incidentally,
+# as part of writing a specific post, so without this a brand with a slow
+# calendar could go a long time between fresh research. Same "float
+# seconds" schedule shape as ENGAGEMENT_POLL_INTERVAL_SECONDS/
+# WEEKLY_REPORT_INTERVAL_SECONDS above, but — per #105's acceptance
+# criteria that the interval be configurable via an env var — sourced
+# from Settings.research_refresh_interval_hours rather than a hardcoded
+# literal (see apps/api/config/__init__.py). Read once at process start,
+# same as every other beat_schedule entry here.
+RESEARCH_REFRESH_INTERVAL_SECONDS = settings.research_refresh_interval_hours * 60 * 60.0
+
 # Issue #29: on a recurring schedule, poll ContentCalendarEvent for events
 # approaching their target_datetime and start the #18 pipeline for each.
 # Runs every minute — frequent enough that Settings.pipeline_trigger_lead_
@@ -63,6 +78,10 @@ celery_app.conf.beat_schedule = {
     "generate-weekly-reports": {
         "task": "worker.generate_weekly_reports",
         "schedule": WEEKLY_REPORT_INTERVAL_SECONDS,
+    },
+    "refresh-brand-research": {
+        "task": "worker.refresh_brand_research",
+        "schedule": RESEARCH_REFRESH_INTERVAL_SECONDS,
     },
 }
 
@@ -282,6 +301,57 @@ def generate_weekly_report_task(brand_id: str) -> None:
     db = SessionLocal()
     try:
         generate_weekly_report(db, uuid.UUID(brand_id))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@celery_app.task(name="worker.refresh_brand_research")
+def refresh_brand_research_task() -> int:
+    """Celery Beat entrypoint for Issue #105's standing research job.
+
+    Same fan-out shape as generate_weekly_reports_task above: every brand
+    is "active" (this schema has no archived/deleted flag on Brand yet,
+    same reasoning generate_weekly_reports_task already relies on), so
+    this sweep just resolves every brand and hands each one off to
+    research_brand_task individually, so one brand's search/embedding
+    provider being slow or failing never delays or blocks another
+    brand's research. (run_standalone_brand_research's underlying
+    _brand_research_brief already degrades gracefully on a broken search
+    or embedding provider rather than raising — see research_engine.py —
+    so this per-brand task only needs to handle the "brand vanished
+    mid-sweep" case, not transient provider errors.) Returns the number
+    of brands a research refresh was enqueued for.
+    """
+    db = SessionLocal()
+    try:
+        brand_ids = [row[0] for row in db.query(Brand.id).all()]
+    finally:
+        db.close()
+
+    for brand_id in brand_ids:
+        research_brand_task.delay(str(brand_id))
+    return len(brand_ids)
+
+
+@celery_app.task(name="worker.research_brand")
+def research_brand_task(brand_id: str) -> None:
+    """The actual per-brand standing research Celery task Issue #105 asks
+    for — deliberately thin, same split as generate_weekly_report_task
+    above. All the real logic (the trend/brand-context research itself,
+    plus logging the AgentRun row) lives in
+    packages/agents/pipeline/nodes/research_engine.py's
+    run_standalone_brand_research — the same module (and the same
+    _brand_research_brief core) the on-demand, per-post research node
+    uses — kept import-free of Celery so it stays unit-testable without
+    any Celery/Redis machinery running.
+    """
+    db = SessionLocal()
+    try:
+        run_standalone_brand_research(db, uuid.UUID(brand_id))
         db.commit()
     except Exception:
         db.rollback()

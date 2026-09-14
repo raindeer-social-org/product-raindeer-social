@@ -31,6 +31,7 @@ from apps.api.models import (
     AgentRun,
     AgentType,
     Brand,
+    EngagementSnapshot,
     Organization,
     Post,
     ReviewFeedback,
@@ -135,6 +136,11 @@ def _off_brand_review_payload() -> dict:
                     "calm, five minutes a day.' Drop the exclamation points "
                     "and all-caps throughout."
                 ),
+                "predicted_engagement_score": 15,
+                "predicted_engagement_reasoning": (
+                    "Hype-driven, spammy language like this typically suppresses "
+                    "engagement and trust on LinkedIn's professional audience."
+                ),
             }
         }
     }
@@ -148,6 +154,11 @@ def _on_brand_review_payload() -> dict:
                 "verdict": "approve",
                 "issues": [],
                 "suggested_edits": "No changes needed — tone, claims, and length all match brand voice and LinkedIn norms.",
+                "predicted_engagement_score": 68,
+                "predicted_engagement_reasoning": (
+                    "Calm, benefit-led copy consistent with brand voice should "
+                    "perform in line with typical LinkedIn engagement for this brand."
+                ),
             }
         }
     }
@@ -225,20 +236,26 @@ def test_second_review_pass_appends_a_new_row_instead_of_overwriting(db_session)
 
     with patch(LLM_PATCH_TARGET) as mock_llm:
         mock_llm.return_value.complete.return_value = _llm_response(_on_brand_review_payload())
-        _run_node(db_session, post)
+        first_result = _run_node(db_session, post)
 
         mock_llm.return_value.complete.return_value = _llm_response(_off_brand_review_payload())
-        _run_node(db_session, post)
+        second_result = _run_node(db_session, post)
 
     rows = (
-        db_session.query(ReviewFeedback)
-        .filter(ReviewFeedback.post_id == post.id)
-        .order_by(ReviewFeedback.created_at.asc())
-        .all()
+        db_session.query(ReviewFeedback).filter(ReviewFeedback.post_id == post.id).all()
     )
     assert len(rows) == 2
-    assert rows[0].verdict == ReviewVerdict.APPROVE
-    assert rows[1].verdict == ReviewVerdict.REJECT
+
+    # Looked up by the review_feedback_id each call actually returned
+    # (not by created_at ordering) — within a single test transaction,
+    # Postgres's now() is pinned to transaction start, so both rows can
+    # land on the exact same timestamp and created_at ordering isn't a
+    # reliable tie-breaker.
+    rows_by_id = {str(row.id): row for row in rows}
+    first_row = rows_by_id[first_result["review_output"]["review_feedback_id"]]
+    second_row = rows_by_id[second_result["review_output"]["review_feedback_id"]]
+    assert first_row.verdict == ReviewVerdict.APPROVE
+    assert second_row.verdict == ReviewVerdict.REJECT
 
 
 # --- off-brand content scores low with actionable, specific suggestions ----
@@ -315,12 +332,16 @@ def test_worst_scoring_platform_sets_the_overall_score_and_verdict(db_session) -
                 "verdict": "approve",
                 "issues": [],
                 "suggested_edits": "No changes needed.",
+                "predicted_engagement_score": 80,
+                "predicted_engagement_reasoning": "On-brand copy should perform well.",
             },
             "x": {
                 "score": 20,
                 "verdict": "reject",
                 "issues": ["Uses hype language inconsistent with brand voice."],
                 "suggested_edits": "Rewrite without exclamation points or superlatives; match the calm brand tone.",
+                "predicted_engagement_score": 30,
+                "predicted_engagement_reasoning": "Off-brand hype language tends to underperform.",
             },
         }
     }
@@ -332,6 +353,9 @@ def test_worst_scoring_platform_sets_the_overall_score_and_verdict(db_session) -
     output = result["review_output"]
     assert output["score"] == 20
     assert output["verdict"] == "reject"
+    # Unlike score/verdict, predicted engagement is averaged across
+    # platforms rather than worst-wins (see _overall_predicted_engagement).
+    assert output["predicted_engagement_score"] == 55.0
 
 
 # --- degrade-on-failure ------------------------------------------------
@@ -452,12 +476,16 @@ def test_pipeline_logs_agent_run_with_agent_type_reviewer_and_writes_review_feed
                 "verdict": "approve",
                 "issues": [],
                 "suggested_edits": "No changes needed.",
+                "predicted_engagement_score": 75,
+                "predicted_engagement_reasoning": "On-brand, calm copy in line with typical performance.",
             },
             "x": {
                 "score": 85,
                 "verdict": "approve",
                 "issues": [],
                 "suggested_edits": "No changes needed.",
+                "predicted_engagement_score": 70,
+                "predicted_engagement_reasoning": "Concise, on-brand copy should perform well on X.",
             },
         }
     }
@@ -496,3 +524,167 @@ def test_pipeline_logs_agent_run_with_agent_type_reviewer_and_writes_review_feed
     assert feedback_rows[0].source == ReviewSource.AI_REVIEWER
     assert feedback_rows[0].score == 85.0
     assert feedback_rows[0].verdict == ReviewVerdict.APPROVE
+
+
+# --- predicted engagement (Issue #107) --------------------------------------
+
+
+def _add_historical_snapshot(
+    db_session, brand: Brand, platform: str, likes: int, comments: int, shares: int, impressions: int
+) -> None:
+    """A past, already-published Post on `platform` for `brand` with one
+    EngagementSnapshot row — the raw material _historical_engagement_stats
+    aggregates over."""
+    past_post = Post(brand_id=brand.id)
+    db_session.add(past_post)
+    db_session.flush()
+    db_session.add(
+        EngagementSnapshot(
+            post_id=past_post.id,
+            platform=platform,
+            likes=likes,
+            comments=comments,
+            shares=shares,
+            impressions=impressions,
+        )
+    )
+    db_session.flush()
+
+
+def test_predicted_engagement_persisted_on_review_feedback_row_and_output(db_session) -> None:
+    post = _setup_post(db_session, body_text=ON_BRAND_BODY_TEXT)
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = _llm_response(_on_brand_review_payload())
+        result = _run_node(db_session, post)
+
+    output = result["review_output"]
+    assert output["predicted_engagement_score"] == 68.0
+    assert "engagement" in output["predicted_engagement_reasoning"].lower() or len(
+        output["predicted_engagement_reasoning"]
+    ) > 0
+
+    row = db_session.query(ReviewFeedback).filter(ReviewFeedback.post_id == post.id).one()
+    assert row.predicted_engagement_score == 68.0
+    assert row.predicted_engagement_reasoning == output["predicted_engagement_reasoning"]
+
+
+def test_predicted_engagement_omitted_by_llm_degrades_to_fallback(db_session) -> None:
+    """Same all-or-nothing parse contract as the other required per-platform
+    fields (see test_reviewer_degrades_gracefully_when_llm_omits_required_fields)
+    — an LLM response missing predicted_engagement_score/reasoning must not
+    silently ship a review with no engagement prediction, it degrades the
+    whole platform review to the fixed fallback."""
+    post = _setup_post(db_session, body_text=ON_BRAND_BODY_TEXT)
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = _llm_response(
+            {
+                "platforms": {
+                    "linkedin": {
+                        "score": 90,
+                        "verdict": "approve",
+                        "issues": [],
+                        "suggested_edits": "No changes needed.",
+                        # predicted_engagement_score/reasoning deliberately omitted
+                    }
+                }
+            }
+        )
+        result = _run_node(db_session, post)
+
+    output = result["review_output"]
+    assert output["verdict"] == "revise"
+    assert output["score"] == 50.0
+    assert output["predicted_engagement_score"] == 50.0
+    assert "unavailable" in output["predicted_engagement_reasoning"].lower()
+
+
+def test_reviewer_falls_back_to_manual_review_includes_engagement_fallback(db_session) -> None:
+    post = _setup_post(db_session, body_text=ON_BRAND_BODY_TEXT)
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.side_effect = Exception("LLM provider unreachable")
+        result = _run_node(db_session, post)
+
+    output = result["review_output"]
+    assert output["predicted_engagement_score"] == 50.0
+    assert "unavailable" in output["predicted_engagement_reasoning"].lower()
+
+    row = db_session.query(ReviewFeedback).filter(ReviewFeedback.post_id == post.id).one()
+    assert row.predicted_engagement_score == 50.0
+
+
+def test_historical_engagement_grounds_the_llm_prompt_when_enough_history_exists(db_session) -> None:
+    """Prefer grounding the prediction in the brand's actual historical
+    performance where available (Issue #107's acceptance criteria) — when
+    a brand has _MIN_HISTORICAL_SAMPLES+ past LinkedIn posts with real
+    impressions, the real computed average engagement rate must be handed
+    to the LLM as grounding data in the prompt, not left for the LLM to
+    guess."""
+    brand = _setup_brand(db_session)
+    # 3 historical posts, engagement rate (likes+comments+shares)/impressions
+    # of exactly 10% each -> average 10%.
+    for _ in range(3):
+        _add_historical_snapshot(
+            db_session, brand, "linkedin", likes=8, comments=1, shares=1, impressions=100
+        )
+    post = _setup_post(db_session, brand=brand, body_text=ON_BRAND_BODY_TEXT)
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = _llm_response(_on_brand_review_payload())
+        _run_node(db_session, post)
+
+    prompt = mock_llm.return_value.complete.call_args.kwargs["prompt"]
+    assert "3 historical posts" in prompt
+    assert "10.00%" in prompt
+
+
+def test_historical_engagement_says_insufficient_data_when_brand_has_no_history(db_session) -> None:
+    post = _setup_post(db_session, body_text=ON_BRAND_BODY_TEXT)
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = _llm_response(_on_brand_review_payload())
+        _run_node(db_session, post)
+
+    prompt = mock_llm.return_value.complete.call_args.kwargs["prompt"]
+    assert "insufficient historical data" in prompt
+
+
+def test_historical_engagement_below_minimum_sample_size_is_not_used(db_session) -> None:
+    """Two historical snapshots is below _MIN_HISTORICAL_SAMPLES (3) — too
+    noisy a sample to hand over as a trustworthy benchmark, so the prompt
+    must still say the data is insufficient rather than grounding on it."""
+    brand = _setup_brand(db_session)
+    for _ in range(2):
+        _add_historical_snapshot(
+            db_session, brand, "linkedin", likes=8, comments=1, shares=1, impressions=100
+        )
+    post = _setup_post(db_session, brand=brand, body_text=ON_BRAND_BODY_TEXT)
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = _llm_response(_on_brand_review_payload())
+        _run_node(db_session, post)
+
+    prompt = mock_llm.return_value.complete.call_args.kwargs["prompt"]
+    assert "insufficient historical data" in prompt
+
+
+def test_overall_predicted_engagement_is_averaged_not_worst_platform(db_session) -> None:
+    """Contrasts with _overall_from_platforms (brand-alignment score/verdict
+    is worst-platform-wins) — predicted engagement is averaged across
+    platforms instead, exercised directly via
+    test_worst_scoring_platform_sets_the_overall_score_and_verdict's
+    assertion above; this test checks the single-platform passthrough case."""
+    post = _setup_post(db_session, body_text=ON_BRAND_BODY_TEXT)
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = _llm_response(_on_brand_review_payload())
+        result = _run_node(db_session, post)
+
+    output = result["review_output"]
+    # Single platform: overall reasoning passes through the one platform's
+    # reasoning unmodified rather than prefixing it with the platform name.
+    assert output["predicted_engagement_reasoning"] == (
+        output["platforms"]["linkedin"]["predicted_engagement_reasoning"]
+    )
