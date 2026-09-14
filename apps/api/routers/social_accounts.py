@@ -19,7 +19,7 @@ router = APIRouter(tags=["social-accounts"])
 
 WRITE_ROLES = (UserRole.OWNER, UserRole.ADMIN, UserRole.EDITOR)
 
-STATE_PURPOSE = "linkedin_oauth_connect"
+STATE_PURPOSE = "social_oauth_connect"
 STATE_EXPIRES_MINUTES = 10
 
 
@@ -49,24 +49,26 @@ def _get_account_or_404(
     return account
 
 
-def _create_state(brand_id: uuid.UUID) -> str:
+def _create_state(brand_id: uuid.UUID, platform: str) -> str:
     # The signed state token IS the authorization credential the callback
     # step relies on — WRITE_ROLES was already checked when /connect issued
-    # it, and LinkedIn's redirect back to /callback carries no Authorization
-    # header of its own, so this is what proves the callback is legitimate
-    # and which brand it's for.
+    # it, and the platform's redirect back to /callback carries no
+    # Authorization header of its own, so this is what proves the callback
+    # is legitimate, which brand it's for, and (via `purpose`) which
+    # platform it was issued for — a state minted for one platform's
+    # connect flow must not be replayable against another's callback.
     settings = get_settings()
     now = datetime.now(timezone.utc)
     payload = {
         "brand_id": str(brand_id),
-        "purpose": STATE_PURPOSE,
+        "purpose": f"{platform}_oauth_connect",
         "iat": now,
         "exp": now + timedelta(minutes=STATE_EXPIRES_MINUTES),
     }
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 
 
-def _verify_state(state: str) -> uuid.UUID:
+def _verify_state(state: str, platform: str) -> uuid.UUID:
     settings = get_settings()
     try:
         payload = jwt.decode(state, settings.secret_key, algorithms=[ALGORITHM])
@@ -75,7 +77,7 @@ def _verify_state(state: str) -> uuid.UUID:
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OAuth state"
         ) from None
 
-    if payload.get("purpose") != STATE_PURPOSE:
+    if payload.get("purpose") != f"{platform}_oauth_connect":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth state")
 
     try:
@@ -123,7 +125,7 @@ def connect_linkedin(
         )
 
     provider = get_social_oauth_provider("linkedin")
-    state = _create_state(brand_id)
+    state = _create_state(brand_id, "linkedin")
     url = provider.authorize_url(state=state, redirect_uri=settings.linkedin_redirect_uri)
     return AuthorizeUrlRead(authorize_url=url)
 
@@ -134,18 +136,65 @@ def linkedin_callback(
     state: str = Query(...),
     db: Session = Depends(get_db),
 ) -> SocialAccount:
-    brand_id = _verify_state(state)
+    brand_id = _verify_state(state, "linkedin")
     settings = get_settings()
     provider = get_social_oauth_provider("linkedin")
     tokens = provider.exchange_code(code=code, redirect_uri=settings.linkedin_redirect_uri or "")
+    return _upsert_social_account(db, brand_id, SocialPlatform.LINKEDIN, tokens)
 
+
+@router.post(
+    "/brands/{brand_id}/social-accounts/x/connect",
+    response_model=AuthorizeUrlRead,
+)
+def connect_x(
+    brand_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_role(*WRITE_ROLES)),
+) -> AuthorizeUrlRead:
+    _get_org_brand(db, brand_id, current_user.org_id)
+    settings = get_settings()
+    if not settings.x_redirect_uri:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="X OAuth is not configured",
+        )
+
+    provider = get_social_oauth_provider("x")
+    state = _create_state(brand_id, "x")
+    url = provider.authorize_url(state=state, redirect_uri=settings.x_redirect_uri)
+    return AuthorizeUrlRead(authorize_url=url)
+
+
+@router.get("/oauth/x/callback", response_model=SocialAccountRead)
+def x_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+    db: Session = Depends(get_db),
+) -> SocialAccount:
+    brand_id = _verify_state(state, "x")
+    settings = get_settings()
+    provider = get_social_oauth_provider("x")
+    # XProvider's PKCE ("plain") requires code_verifier == the code_challenge
+    # sent at authorize_url time, which is `state` (see XProvider's
+    # docstring) — pass it through here rather than at exchange_code's
+    # default, which would raise.
+    tokens = provider.exchange_code(
+        code=code, redirect_uri=settings.x_redirect_uri or "", code_verifier=state
+    )
+    return _upsert_social_account(db, brand_id, SocialPlatform.X, tokens)
+
+
+def _upsert_social_account(
+    db: Session, brand_id: uuid.UUID, platform: SocialPlatform, tokens
+) -> SocialAccount:
     account = (
         db.query(SocialAccount)
-        .filter(SocialAccount.brand_id == brand_id, SocialAccount.platform == SocialPlatform.LINKEDIN)
+        .filter(SocialAccount.brand_id == brand_id, SocialAccount.platform == platform)
         .first()
     )
     if account is None:
-        account = SocialAccount(brand_id=brand_id, platform=SocialPlatform.LINKEDIN)
+        account = SocialAccount(brand_id=brand_id, platform=platform)
         db.add(account)
 
     account.external_account_id = tokens.external_account_id
@@ -160,6 +209,142 @@ def linkedin_callback(
     db.flush()
     db.refresh(account)
     return account
+
+
+def _connect_platform(
+    db: Session,
+    brand_id: uuid.UUID,
+    current_user: CurrentUser,
+    platform: str,
+    redirect_uri: str | None,
+) -> AuthorizeUrlRead:
+    """Shared body for the Instagram/Threads/Facebook /connect endpoints
+    below — identical in shape to connect_linkedin above, just
+    parameterized by platform since all three are wired the same way."""
+    _get_org_brand(db, brand_id, current_user.org_id)
+    if not redirect_uri:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"{platform.capitalize()} OAuth is not configured",
+        )
+
+    provider = get_social_oauth_provider(platform)
+    state = _create_state(brand_id, platform)
+    url = provider.authorize_url(state=state, redirect_uri=redirect_uri)
+    return AuthorizeUrlRead(authorize_url=url)
+
+
+def _platform_callback(
+    db: Session,
+    code: str,
+    state: str,
+    platform: str,
+    redirect_uri: str | None,
+    social_platform: SocialPlatform,
+) -> SocialAccount:
+    """Shared body for the Instagram/Threads/Facebook OAuth callbacks below
+    — identical in shape to linkedin_callback above, just parameterized by
+    platform since all three are wired the same way."""
+    brand_id = _verify_state(state, platform)
+    provider = get_social_oauth_provider(platform)
+    tokens = provider.exchange_code(code=code, redirect_uri=redirect_uri or "")
+
+    account = (
+        db.query(SocialAccount)
+        .filter(SocialAccount.brand_id == brand_id, SocialAccount.platform == social_platform)
+        .first()
+    )
+    if account is None:
+        account = SocialAccount(brand_id=brand_id, platform=social_platform)
+        db.add(account)
+
+    account.external_account_id = tokens.external_account_id
+    account.access_token_encrypted = encrypt_token(tokens.access_token)
+    account.refresh_token_encrypted = (
+        encrypt_token(tokens.refresh_token) if tokens.refresh_token else None
+    )
+    account.token_expires_at = tokens.expires_at
+    account.scopes = tokens.scopes
+    account.status = SocialAccountStatus.ACTIVE
+
+    db.flush()
+    db.refresh(account)
+    return account
+
+
+@router.post(
+    "/brands/{brand_id}/social-accounts/instagram/connect",
+    response_model=AuthorizeUrlRead,
+)
+def connect_instagram(
+    brand_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_role(*WRITE_ROLES)),
+) -> AuthorizeUrlRead:
+    settings = get_settings()
+    return _connect_platform(db, brand_id, current_user, "instagram", settings.instagram_redirect_uri)
+
+
+@router.get("/oauth/instagram/callback", response_model=SocialAccountRead)
+def instagram_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+    db: Session = Depends(get_db),
+) -> SocialAccount:
+    settings = get_settings()
+    return _platform_callback(
+        db, code, state, "instagram", settings.instagram_redirect_uri, SocialPlatform.INSTAGRAM
+    )
+
+
+@router.post(
+    "/brands/{brand_id}/social-accounts/threads/connect",
+    response_model=AuthorizeUrlRead,
+)
+def connect_threads(
+    brand_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_role(*WRITE_ROLES)),
+) -> AuthorizeUrlRead:
+    settings = get_settings()
+    return _connect_platform(db, brand_id, current_user, "threads", settings.threads_redirect_uri)
+
+
+@router.get("/oauth/threads/callback", response_model=SocialAccountRead)
+def threads_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+    db: Session = Depends(get_db),
+) -> SocialAccount:
+    settings = get_settings()
+    return _platform_callback(
+        db, code, state, "threads", settings.threads_redirect_uri, SocialPlatform.THREADS
+    )
+
+
+@router.post(
+    "/brands/{brand_id}/social-accounts/facebook/connect",
+    response_model=AuthorizeUrlRead,
+)
+def connect_facebook(
+    brand_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_role(*WRITE_ROLES)),
+) -> AuthorizeUrlRead:
+    settings = get_settings()
+    return _connect_platform(db, brand_id, current_user, "facebook", settings.facebook_redirect_uri)
+
+
+@router.get("/oauth/facebook/callback", response_model=SocialAccountRead)
+def facebook_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+    db: Session = Depends(get_db),
+) -> SocialAccount:
+    settings = get_settings()
+    return _platform_callback(
+        db, code, state, "facebook", settings.facebook_redirect_uri, SocialPlatform.FACEBOOK
+    )
 
 
 @router.post(
