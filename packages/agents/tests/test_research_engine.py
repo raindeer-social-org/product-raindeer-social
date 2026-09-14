@@ -345,7 +345,7 @@ def test_standalone_research_covers_every_supported_platform(db_session) -> None
     assert brief["brand_id"] == str(brand.id)
     assert "post_id" not in brief
     signal = brief["timing_signal"]
-    assert signal["platforms"] == ["linkedin", "x"]
+    assert signal["platforms"] == list(SUPPORTED_PLATFORMS)
     assert signal["target_datetime"] is None
 
 
