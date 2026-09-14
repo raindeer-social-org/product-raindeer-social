@@ -11,12 +11,12 @@
 // run reads (the calendar event's brief, the brand) plus the eight real
 // pipeline stages (apps/api/models/agent_run.py::AgentType /
 // packages/agents/pipeline/graph.py::PIPELINE_STAGES).
-import type { AgentType } from "@/lib/api";
+import type { ArenaAgentType } from "@/lib/api";
 
 export type ArenaNodeId =
   | "brief"
   | "brand"
-  | AgentType; // research | creative | generation | reviewer | human_review | scheduler | publisher | analytics_collector
+  | ArenaAgentType; // research | creative | generation | reviewer | human_review | scheduler | publisher | analytics_collector
 
 export interface LaneDef {
   id: string;

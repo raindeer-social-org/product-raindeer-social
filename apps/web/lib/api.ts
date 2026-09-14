@@ -432,8 +432,9 @@ export async function rescheduleReviewPost(
 // Mirrors apps/api/models/agent_run.py::AgentType — only the eight
 // per-post pipeline stages can appear here (onboarding/weekly_report runs
 // never carry a post_id, so the arena endpoints below can never surface
-// them).
-export type AgentType =
+// them). Named distinctly from the broader AgentType above since the two
+// are intentionally different-width subsets of the same backend enum.
+export type ArenaAgentType =
   | "research"
   | "creative"
   | "generation"
@@ -451,7 +452,7 @@ export type AgentType =
 // a real prompt.
 export interface ArenaAgentRun {
   id: string;
-  agent_type: AgentType;
+  agent_type: ArenaAgentType;
   output: Record<string, unknown> | null;
   model: string | null;
   tokens: number | null;
