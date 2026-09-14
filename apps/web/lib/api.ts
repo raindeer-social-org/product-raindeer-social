@@ -102,7 +102,8 @@ export type ReviewVerdict = "approve" | "revise" | "reject";
 
 // Mirrors apps/api/schemas/review.py::ReviewFeedbackRead. `comments` is
 // free-form JSONB — for an ai_reviewer row it's shaped like
-// { platforms: { [platform]: { score, verdict, issues, suggested_edits } }, model };
+// { platforms: { [platform]: { score, verdict, issues, suggested_edits,
+// predicted_engagement_score, predicted_engagement_reasoning } }, model };
 // for a human row it's { comments?: string }.
 export interface ReviewFeedback {
   id: string;
@@ -111,6 +112,10 @@ export interface ReviewFeedback {
   score: number;
   verdict: ReviewVerdict;
   comments: Record<string, unknown>;
+  // Issue #107 — only populated on ai_reviewer rows; a human row
+  // (approve/reject) never predicts engagement.
+  predicted_engagement_score: number | null;
+  predicted_engagement_reasoning: string | null;
   created_at: string;
 }
 
