@@ -213,8 +213,14 @@ export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule }: 
                     {aiReview.predicted_engagement_score.toFixed(0)}/100
                   </Badge>
                 </div>
-                <div className="mt-1.5">
-                  <ScoreMeter score={aiReview.predicted_engagement_score} />
+                <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-line-soft" aria-hidden="true">
+                  <div
+                    className={cn(
+                      "h-full rounded-full transition-all",
+                      SCORE_BAR_CLASSES[scoreTone(aiReview.predicted_engagement_score)],
+                    )}
+                    style={{ width: `${Math.max(0, Math.min(100, aiReview.predicted_engagement_score))}%` }}
+                  />
                 </div>
               </div>
             )}

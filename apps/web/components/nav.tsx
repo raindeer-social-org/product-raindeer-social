@@ -152,11 +152,9 @@ function IconSettings() {
 }
 
 // Every route here already exists as a real page. Screens still landing
-// from the mockup migration (Arena, Settings) add their own nav entry in
-// their own PR once the page itself exists — keeps this list from linking
-// to 404s in the meantime. Research/Creative/Create Post/Content AI
-// (Issue #126) are the first of those standalone agent-workspace pages to
-// land.
+// from the mockup migration (Settings) add their own nav entry in their own
+// PR once the page itself exists — keeps this list from linking to 404s in
+// the meantime.
 const NAV_LINKS: { href: string; label: string; icon: () => ReactNode }[] = [
   { href: "/", label: "Dashboard", icon: IconDashboard },
   { href: "/calendar", label: "Calendar", icon: IconCalendar },
@@ -164,13 +162,6 @@ const NAV_LINKS: { href: string; label: string; icon: () => ReactNode }[] = [
   { href: "/creative", label: "Creative · Keshav", icon: IconCreative },
   { href: "/create-post", label: "Create Post", icon: IconCreatePost },
   { href: "/content-ai", label: "Content AI", icon: IconContentAI },
-// from the mockup migration (Research, Creative, Create Post, Content AI,
-// Settings) add their own nav entry in their own PR once the page itself
-// exists — keeps this list from linking to 404s in the meantime. Arena
-// (Issue #124) is the first of those to land.
-const NAV_LINKS: { href: string; label: string; icon: () => ReactNode }[] = [
-  { href: "/", label: "Dashboard", icon: IconDashboard },
-  { href: "/calendar", label: "Calendar", icon: IconCalendar },
   { href: "/arena", label: "Content Arena", icon: IconArena },
   { href: "/review-queue", label: "Review Queue", icon: IconReview },
   { href: "/brands", label: "Brands", icon: IconBrand },
