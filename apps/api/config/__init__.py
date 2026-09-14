@@ -87,6 +87,19 @@ class Settings(BaseSettings):
     # so it stays unit-testable without touching Settings.
     pipeline_trigger_lead_minutes: int = 60
 
+    # Issue #105: how often (in hours) Ved's standing research job
+    # (packages/agents/pipeline/nodes/research_engine.py's
+    # run_standalone_brand_research) re-runs research for every active
+    # brand, independent of whether a post happens to be scheduled onto
+    # the calendar — keeps research fresh between calendar slots rather
+    # than only refreshing each time the #29 pipeline trigger above fires
+    # for a due post. Read by apps/api/worker.py's Celery Beat schedule at
+    # process start, same "Settings field feeds a worker.py schedule/
+    # parameter" convention as pipeline_trigger_lead_minutes above.
+    # Default of 4.5h sits in the middle of the "every 4-5 hours" band
+    # the issue asks for.
+    research_refresh_interval_hours: float = 4.5
+
     # --- CORS (Issue #68) ---
     # Comma-separated list of origins allowed to make cross-origin
     # requests to the API (e.g. the Next.js dev server). Kept as a raw
