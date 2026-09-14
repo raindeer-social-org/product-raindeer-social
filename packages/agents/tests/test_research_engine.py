@@ -38,6 +38,7 @@ from packages.agents.pipeline.graph import run_pipeline
 from packages.agents.pipeline.nodes.research_engine import (
     ResearchEngineError,
     build_research_node,
+    run_standalone_brand_research,
 )
 from packages.integrations.search.base import SearchResult
 
@@ -286,6 +287,119 @@ def test_research_node_appends_to_completed_stages(db_session) -> None:
         result = node({"post_id": str(post.id), "completed_stages": ["upstream_stage"]})
 
     assert result["completed_stages"] == ["upstream_stage", "research"]
+
+
+# --- Issue #105: standalone, per-brand research (independent of any Post) --
+
+
+def test_standalone_research_reuses_the_same_search_and_context_logic(db_session) -> None:
+    """Same "SearchProvider only through its interface" + brand-context-
+    reuse contract as the per-post node — proven the same way those tests
+    prove it for build_research_node."""
+    brand = _setup_brand(db_session, industry="Outdoor gear")
+
+    with patch(SEARCH_PATCH_TARGET) as mock_search, patch(EMBED_PATCH_TARGET) as mock_embed:
+        mock_search.return_value.search.return_value = []
+        mock_embed.return_value.embed.return_value = _fake_embed("query")
+
+        run_standalone_brand_research(db_session, brand.id)
+
+    mock_search.assert_called()
+    mock_search.return_value.search.assert_called()
+
+
+def test_standalone_research_degrades_gracefully_on_search_provider_failure(db_session) -> None:
+    brand = _setup_brand(db_session)
+
+    with patch(SEARCH_PATCH_TARGET) as mock_search, patch(EMBED_PATCH_TARGET) as mock_embed:
+        mock_search.return_value.search.side_effect = Exception("Tavily timed out")
+        mock_embed.return_value.embed.return_value = _fake_embed("query")
+
+        run = run_standalone_brand_research(db_session, brand.id)
+
+    brief = run.output["research_brief"]
+    assert brief["industry_trends"] == []
+    assert all(results == [] for results in brief["platform_trends"].values())
+    assert brief["timing_signal"]["trending_topics"] == []
+
+
+def test_standalone_research_covers_every_supported_platform(db_session) -> None:
+    """Unlike the per-post path (which narrows to a ContentCalendarEvent's
+    target_platforms when one exists), there's no calendar event here, so
+    the standalone job always researches every SUPPORTED_PLATFORMS
+    platform and has no target_datetime to report."""
+    brand = _setup_brand(db_session)
+
+    with patch(SEARCH_PATCH_TARGET) as mock_search, patch(EMBED_PATCH_TARGET) as mock_embed:
+        mock_search.return_value.search.return_value = []
+        mock_embed.return_value.embed.return_value = _fake_embed("query")
+
+        run = run_standalone_brand_research(db_session, brand.id)
+
+    brief = run.output["research_brief"]
+    assert brief["brand_id"] == str(brand.id)
+    assert "post_id" not in brief
+    signal = brief["timing_signal"]
+    assert signal["platforms"] == ["linkedin", "x"]
+    assert signal["target_datetime"] is None
+
+
+def test_standalone_research_reuses_brand_context_retrieval_helper(db_session) -> None:
+    brand = _setup_brand(db_session)
+    brand.brand_report = {"audience": "Eco-conscious millennials"}
+    db_session.flush()
+
+    with patch("packages.agents.onboarding.embedding.get_embedding_provider") as mock_embed_onboard:
+        mock_embed_onboard.return_value.embed.side_effect = _fake_embed
+        embed_brand_report(db_session, brand)
+
+    with patch(SEARCH_PATCH_TARGET) as mock_search, patch(EMBED_PATCH_TARGET) as mock_embed:
+        mock_search.return_value.search.return_value = []
+        mock_embed.return_value.embed.side_effect = _fake_embed
+
+        run = run_standalone_brand_research(db_session, brand.id)
+
+    assert run.output["research_brief"]["brand_context"] == [
+        {"section": "audience", "content": "Eco-conscious millennials"}
+    ]
+
+
+def test_standalone_research_raises_when_brand_not_found(db_session) -> None:
+    with pytest.raises(ResearchEngineError):
+        run_standalone_brand_research(db_session, uuid.uuid4())
+
+
+def test_standalone_research_logs_agent_run_with_null_post_id(db_session) -> None:
+    """Not reached through run_pipeline (there's no Post/thread for a
+    standalone brand-level run), so — same convention
+    packages/agents/reporting/weekly_report.py's per-brand job
+    establishes — this path logs its own AgentRun row directly, with
+    post_id left null and brand_id carried in `input` instead."""
+    brand = _setup_brand(db_session)
+
+    trend_results = [
+        SearchResult(title="AI content trends 2026", url="https://x.test/a", content="...")
+    ]
+
+    with patch(SEARCH_PATCH_TARGET) as mock_search, patch(EMBED_PATCH_TARGET) as mock_embed:
+        mock_search.return_value.search.return_value = trend_results
+        mock_embed.return_value.embed.return_value = _fake_embed("query")
+
+        run = run_standalone_brand_research(db_session, brand.id)
+
+    assert run.post_id is None
+    assert run.agent_type == AgentType.RESEARCH
+    assert run.input == {"brand_id": str(brand.id)}
+    assert run.output["research_brief"]["timing_signal"]["trending_topics"] == [
+        "AI content trends 2026"
+    ]
+
+    persisted = (
+        db_session.query(AgentRun)
+        .filter(AgentRun.id == run.id, AgentRun.agent_type == AgentType.RESEARCH)
+        .one()
+    )
+    assert persisted.post_id is None
 
 
 # --- AgentRun logged with agent_type=research, via the real pipeline -------

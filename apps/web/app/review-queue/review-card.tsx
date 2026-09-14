@@ -14,6 +14,8 @@ interface PlatformReview {
   verdict?: string;
   issues?: string[];
   suggested_edits?: string;
+  predicted_engagement_score?: number;
+  predicted_engagement_reasoning?: string;
 }
 
 // Mirrors apps/api/models/review_feedback.py::ReviewVerdict.
@@ -201,6 +203,21 @@ export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule }: 
                 />
               </div>
             </div>
+            {aiReview.predicted_engagement_score != null && (
+              <div className="mt-3 border-t border-slate-100 pt-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                    Predicted engagement
+                  </span>
+                  <Badge tone={scoreTone(aiReview.predicted_engagement_score)}>
+                    {aiReview.predicted_engagement_score.toFixed(0)}/100
+                  </Badge>
+                </div>
+                <div className="mt-1.5">
+                  <ScoreMeter score={aiReview.predicted_engagement_score} />
+                </div>
+              </div>
+            )}
           </div>
         ) : null}
       </header>
@@ -288,6 +305,17 @@ export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule }: 
                   <div className="mt-2 rounded-md border border-warning/20 bg-warning-bg px-3 py-2">
                     <div className="text-[10px] font-bold uppercase tracking-wider text-warning">Neer&apos;s note</div>
                     <p className="mt-0.5 text-sm text-ink-800">{review.suggested_edits}</p>
+                  </div>
+                )}
+
+                {review.predicted_engagement_score != null && (
+                  <div className="mt-2 rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-900">
+                    <span className="font-semibold">
+                      Predicted engagement: {review.predicted_engagement_score.toFixed(0)}/100
+                    </span>
+                    {review.predicted_engagement_reasoning && (
+                      <p className="mt-1 text-blue-800">{review.predicted_engagement_reasoning}</p>
+                    )}
                   </div>
                 )}
               </li>
