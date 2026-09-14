@@ -17,18 +17,28 @@ const PUBLIC_PATHS = ["/login", "/signup"];
 // just don't get the Nav wrapper once one is present.
 const CHROMELESS_PATHS = ["/login", "/signup", "/signup/brand", "/onboarding/interview"];
 
+// Routes that render their own full-height shell instead of the light
+// Nav sidebar + padded <main> every other authenticated route gets. The
+// Content Arena (Issue #124, apps/web/app/arena/page.tsx) is a
+// deliberately separate dark visual world from the rest of the app — see
+// tailwind.config.ts's `arenadark` tokens — so it needs the full viewport
+// to itself, not squeezed into the app shell's max-w-6xl column.
+const FULL_BLEED_PATHS = ["/arena"];
+
 /**
  * Wraps the whole app (mounted from app/layout.tsx). Redirects
  * unauthenticated visitors to /login on every protected route, and renders
  * the shell nav once a session is present (except on the chromeless
- * signup/onboarding wizard routes, which render full-bleed).
+ * signup/onboarding wizard routes and FULL_BLEED_PATHS, which render
+ * directly — still gated by the same redirect logic below).
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const { token, isLoading } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const isPublicPath = PUBLIC_PATHS.includes(pathname);
-  const isChromeless = CHROMELESS_PATHS.includes(pathname);
+  const isChromeless =
+    CHROMELESS_PATHS.includes(pathname) || FULL_BLEED_PATHS.some((path) => pathname.startsWith(path));
 
   useEffect(() => {
     if (isLoading || isPublicPath) return;

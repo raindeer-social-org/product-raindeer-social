@@ -112,4 +112,29 @@ describe("AuthGate", () => {
     // be present on a chromeless route.
     expect(screen.queryByRole("navigation", { name: "Main navigation" })).not.toBeInTheDocument();
   });
+
+  it("renders full-bleed routes (e.g. Content Arena) without the Nav sidebar", async () => {
+    mockPathname = "/arena";
+    window.localStorage.setItem("raindeer.auth.token", "test-token");
+
+    renderGate();
+
+    await waitFor(() => {
+      expect(screen.getByText("protected content")).toBeInTheDocument();
+    });
+    expect(replace).not.toHaveBeenCalled();
+    // Nav renders a "Main navigation" landmark — absent on full-bleed routes.
+    expect(screen.queryByRole("navigation", { name: "Main navigation" })).not.toBeInTheDocument();
+  });
+
+  it("still redirects unauthenticated visitors away from full-bleed routes", async () => {
+    mockPathname = "/arena";
+
+    renderGate();
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/login?from=%2Farena");
+    });
+    expect(screen.queryByText("protected content")).not.toBeInTheDocument();
+  });
 });

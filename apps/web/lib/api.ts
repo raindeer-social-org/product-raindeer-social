@@ -102,7 +102,8 @@ export type ReviewVerdict = "approve" | "revise" | "reject";
 
 // Mirrors apps/api/schemas/review.py::ReviewFeedbackRead. `comments` is
 // free-form JSONB — for an ai_reviewer row it's shaped like
-// { platforms: { [platform]: { score, verdict, issues, suggested_edits } }, model };
+// { platforms: { [platform]: { score, verdict, issues, suggested_edits,
+// predicted_engagement_score, predicted_engagement_reasoning } }, model };
 // for a human row it's { comments?: string }.
 export interface ReviewFeedback {
   id: string;
@@ -111,10 +112,19 @@ export interface ReviewFeedback {
   score: number;
   verdict: ReviewVerdict;
   comments: Record<string, unknown>;
+  // Issue #107 — only populated on ai_reviewer rows; a human row
+  // (approve/reject) never predicts engagement.
+  predicted_engagement_score: number | null;
+  predicted_engagement_reasoning: string | null;
   created_at: string;
 }
 
-// Mirrors apps/api/models/post.py::PipelineStage.
+// Mirrors apps/api/models/post.py::PipelineStage. "failed" is set
+// out-of-band by the publish queue (apps/api/services/publish_queue.py)
+// once a publish permanently exhausts its retries — added here alongside
+// Issue #126's Create Post "Recent runs" list (apps/api/schemas/post.py::
+// PostRead), the first place in the web app that surfaces every stage
+// rather than just the ones review-queue/calendar already covered.
 export type PipelineStage =
   | "research"
   | "creative"
@@ -125,7 +135,8 @@ export type PipelineStage =
   | "publisher"
   | "analytics_collector"
   | "completed"
-  | "rejected";
+  | "rejected"
+  | "failed";
 
 // Mirrors apps/api/schemas/review.py::ReviewQueuePostRead.
 export interface ReviewQueuePost {
@@ -372,6 +383,106 @@ export async function rescheduleReviewPost(
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+// --- Content Arena (Issue #124) ---
+
+// Mirrors apps/api/models/agent_run.py::AgentType — only the eight
+// per-post pipeline stages can appear here (onboarding/weekly_report runs
+// never carry a post_id, so the arena endpoints below can never surface
+// them).
+export type AgentType =
+  | "research"
+  | "creative"
+  | "generation"
+  | "reviewer"
+  | "human_review"
+  | "scheduler"
+  | "publisher"
+  | "analytics_collector";
+
+// Mirrors apps/api/schemas/arena.py::ArenaAgentRunRead. `output` is
+// whatever structured dict that stage's node returned (e.g.
+// research_brief/creative_brief/generation_output/review_output) —
+// rendered defensively, never assumed to have every key. `input` is not
+// exposed: run_pipeline only ever writes {"post_id": ...} into it, never
+// a real prompt.
+export interface ArenaAgentRun {
+  id: string;
+  agent_type: AgentType;
+  output: Record<string, unknown> | null;
+  model: string | null;
+  tokens: number | null;
+  cost: number | null;
+  latency_ms: number | null;
+  created_at: string;
+}
+
+// Mirrors apps/api/schemas/arena.py::ArenaReviewFeedbackRead.
+export interface ArenaReviewFeedback {
+  id: string;
+  source: ReviewSource;
+  score: number;
+  verdict: ReviewVerdict;
+  comments: Record<string, unknown>;
+  created_at: string;
+}
+
+// Mirrors apps/api/schemas/arena.py::ArenaPostRead — a thin Post
+// projection, not the full row.
+export interface ArenaPost {
+  id: string;
+  calendar_event_id: string | null;
+  current_pipeline_stage: PipelineStage;
+  body_text: Record<string, string> | null;
+  media: { platform: string; format: string; url: string }[] | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Mirrors apps/api/schemas/arena.py::ArenaRunRead. `post` is null when the
+// calendar event hasn't been triggered into a Post yet (or the brand has
+// no posts at all, for fetchLatestArenaRun) — agent_runs/review_feedback
+// are always empty in that case too.
+export interface ArenaRun {
+  calendar_event_id: string | null;
+  post: ArenaPost | null;
+  agent_runs: ArenaAgentRun[];
+  review_feedback: ArenaReviewFeedback[];
+}
+
+// apps/api/routers/arena.py mounts these under /brands/{brand_id}/arena —
+// same brand-scoping convention as calendarEventsUrl/reviewQueueUrl above.
+function arenaUrl(brandId: string, suffix: string): string {
+  return `${API_URL}/brands/${brandId}/arena${suffix}`;
+}
+
+export async function fetchArenaRunForEvent(
+  token: string,
+  brandId: string,
+  eventId: string
+): Promise<ArenaRun> {
+  const res = await fetch(arenaUrl(brandId, `/by-event/${eventId}`), {
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+export async function fetchLatestArenaRun(token: string, brandId: string): Promise<ArenaRun> {
+  const res = await fetch(arenaUrl(brandId, "/latest"), {
+    headers: authHeaders(token),
   });
 
   if (!res.ok) {
@@ -1023,6 +1134,160 @@ export async function fetchPostAnalyticsTrend(
   const query = params.toString();
 
   const res = await fetch(analyticsUrl(brandId, `/posts/${postId}/trend${query ? `?${query}` : ""}`), {
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+// --- Research · Ved (Issue #126) ---
+
+// Mirrors apps/api/schemas/research.py::ResearchRunRead. `brief` is
+// exactly what packages/agents/pipeline/nodes/research_engine.py's
+// _research_brief produces: brand_context, platform_trends,
+// industry_trends, timing_signal.
+export interface ResearchRun {
+  id: string;
+  post_id: string;
+  brand_id: string;
+  created_at: string;
+  brief: {
+    post_id: string;
+    brand_context: Array<Record<string, unknown>>;
+    platform_trends: Record<string, Array<{ title: string; url: string; content: string }>>;
+    industry_trends: Array<{ title: string; url: string; content: string }>;
+    timing_signal: {
+      researched_at: string;
+      platforms: string[];
+      trending_topics: string[];
+      target_datetime: string | null;
+    };
+  };
+}
+
+// apps/api/routers/research.py mounts these under /brands/{brand_id}/research
+// — same brand-scoping convention as calendarEventsUrl/reviewQueueUrl above.
+function researchUrl(brandId: string, suffix = ""): string {
+  return `${API_URL}/brands/${brandId}/research${suffix}`;
+}
+
+export async function runResearch(token: string, brandId: string): Promise<ResearchRun> {
+  const res = await fetch(researchUrl(brandId, "/run"), {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+// Returns null (rather than throwing) when no research has been run yet —
+// apps/api/routers/research.py::latest_research 404s in that case, which
+// the Research page treats as its "nothing yet, run one" state.
+export async function fetchLatestResearch(token: string, brandId: string): Promise<ResearchRun | null> {
+  const res = await fetch(researchUrl(brandId, "/latest"), {
+    headers: authHeaders(token),
+  });
+
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  return res.json();
+}
+
+// --- Creative · Keshav (Issue #126) ---
+
+// Mirrors apps/api/schemas/creative.py::CreativeAngleRead.
+export interface CreativeAngle {
+  format: string;
+  angle: string;
+  hook: string;
+  why: string;
+  cta: string;
+  score: number;
+}
+
+export async function generateCreativeAngles(
+  token: string,
+  brandId: string,
+  brief: string
+): Promise<CreativeAngle[]> {
+  const res = await fetch(`${API_URL}/brands/${brandId}/creative/angles`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ brief }),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  const data: { angles: CreativeAngle[] } = await res.json();
+  return data.angles;
+}
+
+// --- Content AI (Issue #126) ---
+
+// Mirrors apps/api/schemas/content_ai.py::ContentAIVariantRead.
+export interface ContentAIVariant {
+  status: "generated" | "failed";
+  url: string | null;
+}
+
+// Mirrors apps/api/schemas/content_ai.py::ContentAIGenerateRequest.
+export interface ContentAIGenerateInput {
+  prompt: string;
+  aspect_ratio?: string | null;
+  style?: string | null;
+  lock_brand_colors?: boolean;
+  count?: number;
+}
+
+export async function generateContentAIImages(
+  token: string,
+  brandId: string,
+  payload: ContentAIGenerateInput
+): Promise<ContentAIVariant[]> {
+  const res = await fetch(`${API_URL}/brands/${brandId}/content-ai/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+
+  const data: { variants: ContentAIVariant[] } = await res.json();
+  return data.variants;
+}
+
+// --- Posts / recent runs (Issue #126) ---
+
+// Mirrors apps/api/schemas/post.py::PostRead.
+export interface PostSummary {
+  id: string;
+  brand_id: string;
+  calendar_event_id: string | null;
+  current_pipeline_stage: PipelineStage;
+  body_text: Record<string, string> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// apps/api/routers/posts.py mounts this under /brands/{brand_id}/posts —
+// same brand-scoping convention as calendarEventsUrl above.
+export async function fetchRecentPosts(token: string, brandId: string, limit = 20): Promise<PostSummary[]> {
+  const res = await fetch(`${API_URL}/brands/${brandId}/posts?limit=${limit}`, {
     headers: authHeaders(token),
   });
 
