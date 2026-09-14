@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ApiError,
+  connectFacebook,
+  connectInstagram,
   connectLinkedIn,
+  connectThreads,
+  connectX,
   disconnectSocialAccount,
   fetchSocialAccounts,
   type AuthorizeUrlResponse,
@@ -23,39 +27,53 @@ import { redirectToAuthorizeUrl } from "./redirect";
 // Human-readable labels per apps/api/models/social_account.py::SocialPlatform.
 const PLATFORM_LABELS: Partial<Record<SocialPlatform, string>> = {
   linkedin: "LinkedIn",
+  x: "X",
+  instagram: "Instagram",
+  threads: "Threads",
+  facebook: "Facebook",
 };
 
 function platformLabel(platform: SocialPlatform): string {
   return PLATFORM_LABELS[platform] ?? platform;
 }
 
-// Platforms the UI can start a real connect flow for. LinkedIn is the only
-// one with a working backend OAuth provider today — kept as a list plus a
-// lookup table (not a single hardcoded button/handler) so a second real
-// provider is a data change here, not a rewrite of this panel.
-const CONNECTABLE_PLATFORMS: SocialPlatform[] = ["linkedin"];
+// Icon badge shown next to each connectable platform's row — same shape
+// (initial + brand color) as the still-inert COMING_SOON_PLATFORMS below,
+// so a platform moving from "coming soon" to real doesn't change its own
+// visual identity, just gains a working button.
+const PLATFORM_BADGE: Record<SocialPlatform, { initial: string; className: string }> = {
+  linkedin: { initial: "in", className: "bg-[#0A66C2]" },
+  x: { initial: "X", className: "bg-ink-950" },
+  instagram: {
+    initial: "IG",
+    className: "bg-gradient-to-br from-[#F58529] via-[#DD2A7B] to-[#8134AF]",
+  },
+  threads: { initial: "@", className: "bg-ink-800" },
+  facebook: { initial: "f", className: "bg-[#1877F2]" },
+};
+
+// Platforms the UI can start a real connect flow for — every platform with
+// a working backend OAuth provider (apps/api/routers/social_accounts.py)
+// today. Kept as a list plus a lookup table (not hardcoded per-platform
+// buttons/handlers) so a new provider is a data change here, not a
+// rewrite of this panel.
+const CONNECTABLE_PLATFORMS: SocialPlatform[] = ["linkedin", "x", "instagram", "threads", "facebook"];
 
 const CONNECT_HANDLERS: Partial<
   Record<SocialPlatform, (token: string, brandId: string) => Promise<AuthorizeUrlResponse>>
 > = {
   linkedin: connectLinkedIn,
+  x: connectX,
+  instagram: connectInstagram,
+  threads: connectThreads,
+  facebook: connectFacebook,
 };
 
 // Platforms shown for parity with the design mockup's full distribution
-// picture, but with no real connect flow behind them yet:
-//   - X: OAuth/PKCE work exists on a separate, not-yet-merged branch — not
-//     part of this codebase yet, so wiring a button here would either
-//     duplicate that work or fake it. Left as "Coming soon".
-//   - Instagram / Threads / Facebook: backend providers are landing in a
-//     separate open PR (#118) — not merged, so nothing real to call yet.
-//   - YouTube: no backend work has started.
-// None of these render a working button — only a disabled "Coming soon"
-// pill — so nothing here pretends to be more connected than it is.
+// picture, but with no real connect flow behind them at all — no backend
+// work has started on YouTube. Renders only a disabled "Coming soon" pill,
+// so nothing here pretends to be more connected than it is.
 const COMING_SOON_PLATFORMS: { key: string; name: string; initial: string; className: string }[] = [
-  { key: "x", name: "X", initial: "X", className: "bg-ink-950" },
-  { key: "instagram", name: "Instagram", initial: "IG", className: "bg-gradient-to-br from-[#F58529] via-[#DD2A7B] to-[#8134AF]" },
-  { key: "threads", name: "Threads", initial: "@", className: "bg-ink-800" },
-  { key: "facebook", name: "Facebook", initial: "f", className: "bg-[#1877F2]" },
   { key: "youtube", name: "YouTube", initial: "YT", className: "bg-[#FF0000]" },
 ];
 
@@ -140,10 +158,10 @@ export function SocialConnectionsPanel({
       redirectToAuthorizeUrl(authorize_url);
     } catch (err) {
       // The backend 503s with a specific, well-known detail message when
-      // it has no LINKEDIN_REDIRECT_URI configured (see
-      // apps/api/routers/social_accounts.py::connect_linkedin) — that's an
-      // expected, common dev-environment state, not a generic failure, so
-      // it gets its own friendly message instead of an error toast.
+      // that platform's redirect URI isn't configured (see
+      // apps/api/routers/social_accounts.py's connect_* handlers) — that's
+      // an expected, common dev-environment state, not a generic failure,
+      // so it gets its own friendly message instead of an error toast.
       if (err instanceof ApiError && err.status === 503) {
         setNotConfiguredPlatform(platform);
       } else {
@@ -191,13 +209,16 @@ export function SocialConnectionsPanel({
         {CONNECTABLE_PLATFORMS.map((platform) => {
           const account = accounts.find((a) => a.platform === platform);
           const expiry = account ? formatExpiry(account.token_expires_at) : null;
+          const badge = PLATFORM_BADGE[platform];
           return (
             <div
               key={platform}
               className="flex items-center gap-3.5 rounded-2xl border border-line bg-white p-4"
             >
-              <div className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] bg-[#0A66C2] text-sm font-extrabold text-white">
-                in
+              <div
+                className={`flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] text-sm font-extrabold text-white ${badge.className}`}
+              >
+                {badge.initial}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-bold text-ink-950">{platformLabel(platform)}</div>
@@ -235,7 +256,7 @@ export function SocialConnectionsPanel({
                   isLoading={connectingPlatform === platform}
                   onClick={() => handleConnect(platform)}
                 >
-                  {account ? "Reconnect" : "Connect"}
+                  {account ? "Reconnect" : "Connect"} {platformLabel(platform)}
                 </Button>
               )}
             </div>
