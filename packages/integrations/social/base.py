@@ -22,7 +22,13 @@ class SocialOAuthProvider(ABC):
         ...
 
     @abstractmethod
-    def exchange_code(self, code: str, redirect_uri: str) -> SocialTokens:
+    def exchange_code(
+        self, code: str, redirect_uri: str, code_verifier: str | None = None
+    ) -> SocialTokens:
+        """`code_verifier` is only meaningful to PKCE-requiring providers
+        (currently XProvider, which needs the exact `state` value it put
+        in `code_challenge` at `authorize_url()` time) — providers that
+        don't use PKCE ignore it."""
         ...
 
     @abstractmethod
