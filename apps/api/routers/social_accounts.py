@@ -282,19 +282,6 @@ def x_callback(
     return _upsert_social_account(db, brand_id, SocialPlatform.X, tokens)
 
 
-def _upsert_social_account(
-    db: Session, brand_id: uuid.UUID, platform: SocialPlatform, tokens
-) -> SocialAccount:
-    account = (
-        db.query(SocialAccount)
-        .filter(SocialAccount.brand_id == brand_id, SocialAccount.platform == platform)
-        .first()
-    )
-    if account is None:
-        account = SocialAccount(brand_id=brand_id, platform=platform)
-        db.add(account)
-
-
 for _platform, (_social_platform, _redirect_attr, _requires_pkce) in _PLATFORM_CONFIG.items():
     router.post(
         f"/brands/{{brand_id}}/social-accounts/{_platform}/connect",

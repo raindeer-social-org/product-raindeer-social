@@ -443,7 +443,7 @@ def test_x_callback_passes_state_as_pkce_code_verifier(db_session, monkeypatch) 
 
 
 @uses_test_session
-def test_state_from_one_platform_rejected_by_another_platforms_callback(db_session) -> None:
+def test_linkedin_state_rejected_by_x_callback(db_session) -> None:
     from apps.api.routers.social_accounts import _create_state
 
     brand, _user = _setup_brand(db_session)
@@ -567,7 +567,7 @@ def test_non_pkce_callback_does_not_pass_code_verifier(db_session, monkeypatch) 
 
 
 @uses_test_session
-def test_state_from_one_platform_rejected_by_another_platforms_callback(db_session, monkeypatch) -> None:
+def test_linkedin_state_rejected_by_instagram_callback(db_session, monkeypatch) -> None:
     from apps.api.config import get_settings
     from apps.api.routers.social_accounts import _create_state
 
