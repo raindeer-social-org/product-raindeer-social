@@ -14,8 +14,31 @@ REQUIRED_REPORT_KEYS = (
 )
 
 
+def _format_dynamic_qa(dynamic_qa: list[dict] | None) -> str:
+    """Renders the adaptive-interview Q&A history (Issue #153) — each page
+    Aarav generated at onboarding time, with what the brand answered — into
+    plain text for the synthesis prompt. `dynamic_qa` mirrors
+    apps/api/routers/onboarding.py::_prior_dynamic_pages's shape: a list of
+    {"page_index", "answers": [{"question": {...}, "answer": ...}, ...]}."""
+    if not dynamic_qa:
+        return "(no follow-up questions were asked)"
+
+    lines = []
+    for page in dynamic_qa:
+        for item in page.get("answers", []):
+            question = item.get("question") or {}
+            title = question.get("title") or question.get("id") or "(untitled question)"
+            answer = item.get("answer")
+            answer_text = ", ".join(answer) if isinstance(answer, list) else str(answer)
+            lines.append(f"- {title} — {answer_text}")
+    return "\n".join(lines) if lines else "(no follow-up questions were answered)"
+
+
 def build_synthesis_prompt(
-    brand_name: str, onboarding_response: dict, research: dict
+    brand_name: str,
+    onboarding_response: dict,
+    research: dict,
+    dynamic_qa: list[dict] | None = None,
 ) -> str:
     return f"""{SYSTEM_PROMPT}
 
@@ -31,6 +54,12 @@ Goals: {", ".join(onboarding_response.get("goals") or [])}
 Mission: {onboarding_response.get("mission") or "(not provided)"}
 Content dos and don'ts: {", ".join(onboarding_response.get("content_dos_donts") or []) or "(none given)"}
 Preferred posting cadence: {onboarding_response.get("posting_cadence") or "(not specified)"}
+
+## Aarav's follow-up questions & answers (Issue #153)
+Aarav asked these adaptively, each one informed by everything answered
+before it — treat this as the most specific, most current signal about the
+brand, ahead of the fixed questionnaire above where the two conflict.
+{_format_dynamic_qa(dynamic_qa)}
 
 ## Web research
 Brand overview: {json.dumps(research.get("brand_overview"))}

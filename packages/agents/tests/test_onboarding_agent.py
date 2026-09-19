@@ -152,3 +152,41 @@ def test_graph_prompt_includes_real_website_scrape_summary(db_session) -> None:
 
     prompt = mock_get_llm.return_value.complete.call_args.kwargs["prompt"]
     assert "hand-finished widgets exclusively to professional makers" in prompt
+
+
+def test_graph_prompt_includes_dynamic_qa_history(db_session) -> None:
+    """Issue #158 — the synthesis prompt should incorporate Aarav's
+    adaptive follow-up questions/answers (Issue #153), not just the fixed
+    questionnaire and web research."""
+    brand, response, research = _setup(db_session)
+    dynamic_qa = [
+        {
+            "page_index": 1,
+            "answers": [
+                {
+                    "question": {"id": "integrations", "title": "What tools does Acme integrate with?"},
+                    "answer": "QuickBooks and Stripe",
+                }
+            ],
+        }
+    ]
+
+    with patch("packages.agents.onboarding.graph.get_llm_provider") as mock_get_llm:
+        mock_get_llm.return_value.complete.return_value = _mock_llm(json.dumps(VALID_REPORT))
+        run_onboarding_agent(db_session, brand, response, research, dynamic_qa=dynamic_qa)
+
+    prompt = mock_get_llm.return_value.complete.call_args.kwargs["prompt"]
+    assert "What tools does Acme integrate with?" in prompt
+    assert "QuickBooks and Stripe" in prompt
+
+
+def test_graph_handles_missing_dynamic_qa(db_session) -> None:
+    """dynamic_qa is optional — omitting it (e.g. from existing callers
+    written before Issue #158) must not break synthesis."""
+    brand, response, research = _setup(db_session)
+
+    with patch("packages.agents.onboarding.graph.get_llm_provider") as mock_get_llm:
+        mock_get_llm.return_value.complete.return_value = _mock_llm(json.dumps(VALID_REPORT))
+        report = run_onboarding_agent(db_session, brand, response, research)
+
+    assert report == VALID_REPORT

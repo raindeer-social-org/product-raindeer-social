@@ -226,7 +226,7 @@ def test_run_agent_runs_research_then_graph_and_returns_brand_with_report(db_ses
     with patch("apps.api.routers.onboarding.run_onboarding_research") as mock_research, patch(
         "apps.api.routers.onboarding.run_onboarding_agent"
     ) as mock_agent, patch("apps.api.routers.onboarding.embed_brand_report") as mock_embed:
-        mock_agent.side_effect = lambda db, brand_arg, response_arg, research_arg: (
+        mock_agent.side_effect = lambda db, brand_arg, response_arg, research_arg, dynamic_qa=None: (
             setattr(brand_arg, "brand_report", report)
         )
         response = client.post(f"/brands/{brand.id}/onboarding/run-agent", headers=headers)
@@ -236,6 +236,52 @@ def test_run_agent_runs_research_then_graph_and_returns_brand_with_report(db_ses
     mock_research.assert_called_once()
     mock_agent.assert_called_once()
     mock_embed.assert_called_once()
+
+
+@uses_test_session
+def test_run_agent_passes_dynamic_qa_history_to_synthesis(db_session) -> None:
+    """Issue #158 — Aarav's adaptive follow-up Q&A (Issue #153) must reach
+    onboarding synthesis, not just the fixed questionnaire."""
+    brand, user = _setup_brand(db_session)
+    headers = _auth_headers(user)
+    full_payload = {
+        "voice": "Playful",
+        "audience": "Gen Z",
+        "product_catalog": {"items": ["A"]},
+        "competitors": ["X"],
+        "goals": ["Grow"],
+    }
+    client.put(f"/brands/{brand.id}/onboarding", json=full_payload, headers=headers)
+    client.post(f"/brands/{brand.id}/onboarding/complete", headers=headers)
+
+    db_session.add(
+        OnboardingDynamicAnswer(
+            brand_id=brand.id,
+            page_index=1,
+            question={"id": "integrations", "title": "What tools does Acme integrate with?"},
+            answer="QuickBooks and Stripe",
+        )
+    )
+    db_session.flush()
+
+    with patch("apps.api.routers.onboarding.run_onboarding_research"), patch(
+        "apps.api.routers.onboarding.run_onboarding_agent"
+    ) as mock_agent, patch("apps.api.routers.onboarding.embed_brand_report"):
+        response = client.post(f"/brands/{brand.id}/onboarding/run-agent", headers=headers)
+
+    assert response.status_code == 200
+    _args, kwargs = mock_agent.call_args
+    assert kwargs["dynamic_qa"] == [
+        {
+            "page_index": 1,
+            "answers": [
+                {
+                    "question": {"id": "integrations", "title": "What tools does Acme integrate with?"},
+                    "answer": "QuickBooks and Stripe",
+                }
+            ],
+        }
+    ]
 
 
 @uses_test_session
