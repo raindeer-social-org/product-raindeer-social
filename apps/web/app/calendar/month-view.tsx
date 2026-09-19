@@ -3,6 +3,7 @@
 import type { CalendarEvent } from "@/lib/api";
 import { cn } from "@/components/ui/cn";
 import { dayKey, getMonthGrid, isSameDay } from "./date-utils";
+import { primaryPlatformColor, platformInitial } from "./platform";
 import { STATUS_CHIP_CLASSES, STATUS_CLASS, STATUS_LABELS } from "./status";
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -90,13 +91,29 @@ export function MonthView({ referenceDate, events, today, onSelectEvent, onAddEv
                       type="button"
                       onClick={() => onSelectEvent(event)}
                       title={`${event.title} — ${STATUS_LABELS[event.status]}`}
+                      style={{ borderLeftColor: primaryPlatformColor(event.target_platforms), borderLeftWidth: 3 }}
                       className={cn(
-                        "block w-full truncate rounded-md px-1.5 py-1 text-left text-xs font-medium transition-colors",
+                        "block w-full rounded-md border border-line-faint bg-white px-1.5 py-1 text-left transition-colors",
                         STATUS_CLASS[event.status],
-                        STATUS_CHIP_CLASSES[event.status],
                       )}
                     >
-                      {event.title}
+                      <span className="flex items-center gap-1">
+                        <span
+                          className="rounded px-1 py-px text-[8px] font-extrabold text-white"
+                          style={{ backgroundColor: primaryPlatformColor(event.target_platforms) }}
+                        >
+                          {platformInitial(event.target_platforms[0] ?? "")}
+                        </span>
+                        <span className="truncate text-xs font-medium text-ink-800">{event.title}</span>
+                      </span>
+                      <span
+                        className={cn(
+                          "mt-1 inline-block rounded px-1 py-px text-[9px] font-bold",
+                          STATUS_CHIP_CLASSES[event.status],
+                        )}
+                      >
+                        {STATUS_LABELS[event.status]}
+                      </span>
                     </button>
                   </li>
                 ))}

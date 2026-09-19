@@ -61,6 +61,36 @@ to resolve Post -> Post.body_text/PostVersion, same as the earlier
 stages), returning the actual LangGraph node function. graph.py's
 build_pipeline_graph() calls this factory for the "generation" stage
 only.
+
+Batch mode (Issue #106) — optional, off by default:
+  Everything above describes this node's default behavior, which is
+  completely unchanged: exactly one Post/PostVersion pair per pipeline
+  run, used by the calendar-slot-triggered flow
+  (packages/agents/pipeline/trigger.py) and by
+  apps/api/routers/review.py's resume calls. Batch mode is an additive,
+  explicitly-requested alternative for a human who wants a small batch of
+  distinct drafts to pick/edit from instead of one draft at a time — it is
+  never turned on implicitly.
+
+  A caller opts in by including a "generation_options" entry (see
+  PipelineState in graph.py) shaped like {"batch": True, "variant_count":
+  <int, optional>} in the initial graph input passed to run_pipeline()
+  (graph.py). When present and truthy, this node runs the same
+  copy+media generation pass _generation_output already implements once
+  per variant (default DEFAULT_BATCH_VARIANT_COUNT, clamped to
+  [MIN_BATCH_VARIANT_COUNT, MAX_BATCH_VARIANT_COUNT]) — the post the run
+  was invoked for becomes variant 1, and (variant_count - 1) additional
+  sibling Post rows are created for the rest, each with its own
+  body_text/media/PostVersion history exactly like a normal single-post
+  run would produce. All variants share a freshly generated
+  Post.variant_group_id (apps/api/models/post.py) so they can be queried
+  together later, with Post.variant_index recording each one's 1-based
+  position. Sibling Posts are deliberately created with no
+  calendar_event_id of their own — see _clone_post_for_variant's
+  docstring for why. Exactly one AgentRun row is still logged for the
+  generation stage either way (see the AgentRun paragraph above) — batch
+  mode's token/cost/latency figures on that row are summed across every
+  variant it produced.
 """
 
 import json
@@ -73,7 +103,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from apps.api.config import get_settings
-from apps.api.models.post import Post
+from apps.api.models.post import PipelineStage, Post
 from apps.api.models.post_version import PostVersion
 from packages.integrations.registry import (
     get_image_provider,
@@ -100,6 +130,17 @@ VIDEO_FORMAT_KEYWORDS = ("video", "carousel")
 # until a real pricing/billing feed exists — not tied to any specific
 # model's actual price.
 _COST_PER_1K_TOKENS = 0.002
+
+# Batch mode (Issue #106) defaults/bounds for "generation_options":
+# {"variant_count": N} — the issue asks for "4-5" variants, so 5 is the
+# default when a caller opts into batch mode without naming a count; the
+# clamp keeps a bad/unbounded caller-supplied value (too small to be a
+# meaningful batch, or large enough to hammer the LLM/image providers)
+# from turning into a runaway loop of LLM/image-gen calls rather than
+# raising and failing the whole pipeline run over it.
+DEFAULT_BATCH_VARIANT_COUNT = 5
+MIN_BATCH_VARIANT_COUNT = 2
+MAX_BATCH_VARIANT_COUNT = 8
 
 
 class GenerationEngineError(Exception):
@@ -336,23 +377,90 @@ def _fallback_copy_for(platform_brief: dict[str, Any], platform: str) -> str:
     return f"[Generation Engine fallback] Unable to generate copy for {platform}."
 
 
+# Copy that leans on these reads as AI-generated filler, not something a
+# person on the brand's social team actually wrote — banned outright.
+_BANNED_PHRASES = (
+    "in today's fast-paced world",
+    "in today's digital age",
+    "unlock the power of",
+    "look no further",
+    "game-changer",
+    "game changer",
+    "let's dive in",
+    "dive right in",
+    "unleash",
+    "elevate your",
+    "take it to the next level",
+    "revolutionize",
+    "buckle up",
+    "the world of",
+    "whether you're a",
+    "at the end of the day",
+)
+
+_PLATFORM_FORMAT_RULES = {
+    "linkedin": (
+        "LinkedIn: written like a real professional post, not a press "
+        "release. Short paragraphs (1-3 sentences), line breaks between "
+        "them for scannability. At most 0-3 hashtags at the very end, "
+        "never a wall of hashtags, never hashtags mid-sentence."
+    ),
+    "x": (
+        "X: tight and punchy, under ~280 characters unless the brief "
+        "explicitly calls for a thread. No hashtag walls — 0-1 hashtag "
+        "only if it's genuinely load-bearing. Every word has to earn its "
+        "place."
+    ),
+    "instagram": (
+        "Instagram: caption supports the visual, doesn't duplicate it. "
+        "Hook is the first line — it's the only part visible before "
+        "'more' truncates the rest. Hashtags are fine (5-15), grouped at "
+        "the end, relevant rather than generic (#love #instagood banned)."
+    ),
+}
+_DEFAULT_FORMAT_RULE = (
+    "Match this platform's real norms for length, formatting, and "
+    "hashtag/emoji use as implied by its brief."
+)
+
+
 def _build_prompt(platform_briefs: dict[str, dict[str, str]], platforms: list[str]) -> str:
     briefs_json = json.dumps({platform: platform_briefs.get(platform, {}) for platform in platforms})
-    return f"""You are a senior social media copywriter turning an
+    banned = ", ".join(f'"{phrase}"' for phrase in _BANNED_PHRASES)
+    format_rules = "\n".join(
+        f"- {platform}: {_PLATFORM_FORMAT_RULES.get(platform, _DEFAULT_FORMAT_RULE)}"
+        for platform in platforms
+    )
+    return f"""You are Kavi, a senior social media copywriter turning an
 already-approved creative brief into the final, publish-ready post copy —
-the actual words that will be posted, not more strategy. Respond with
-strict JSON only — no markdown, no commentary, no code fences.
+the actual words that will be posted, not more strategy. You write the
+way a genuinely good social media manager writes: specific, confident,
+a little opinionated, never generic. Respond with strict JSON only — no
+markdown, no commentary, no code fences.
 
 ## Creative briefs per platform
 {briefs_json}
+
+## Absolutely do not use these phrases or their close paraphrases
+{banned}. Also avoid: stacking 3+ emoji in a row, ending every sentence
+with an exclamation point, and asking a rhetorical question just to fill
+space ("Ever wonder why...?") unless the brief's hook actually calls for
+one.
+
+## Platform-native formatting — this is not optional
+{format_rules}
 
 ## Task
 For EACH of these target platforms — {", ".join(platforms)} — write the
 final post copy that follows that platform's brief (format, angle, hook,
 cta, tone) exactly: open with (or clearly incorporate) that platform's
-hook, end with (or clearly incorporate) its CTA, and match its tone. Each
-platform's copy must be genuinely distinct — reflecting that platform's
-own brief — not the same text reused across platforms.
+hook in the very first line — that's the only part of the post many
+readers will ever see — end with (or clearly incorporate) its CTA, and
+match its tone throughout, not just in the opening line. Write it like a
+specific, real post about this specific brand and angle, not a
+fill-in-the-blank template. Each platform's copy must be genuinely
+distinct in wording and structure — reflecting that platform's own brief
+— never the same text lightly reworded across platforms.
 
 Respond with a single JSON object whose keys are exactly the platform
 names listed above, and whose values are the final copy text (a plain
@@ -462,6 +570,85 @@ def _generation_output(db: Session, post: Post, creative_brief: dict[str, Any]) 
     }
 
 
+def _resolve_variant_count(generation_options: dict[str, Any]) -> int:
+    """Reads "variant_count" out of the caller-supplied generation_options
+    dict (see module docstring's Batch mode section), defaulting to
+    DEFAULT_BATCH_VARIANT_COUNT and clamping to
+    [MIN_BATCH_VARIANT_COUNT, MAX_BATCH_VARIANT_COUNT]. Degrades to the
+    default on a missing/non-numeric value rather than raising — same
+    degrade-on-failure spirit as the rest of this module: a malformed
+    option shouldn't take the whole pipeline run down."""
+    requested = generation_options.get("variant_count", DEFAULT_BATCH_VARIANT_COUNT)
+    try:
+        count = int(requested)
+    except (TypeError, ValueError):
+        count = DEFAULT_BATCH_VARIANT_COUNT
+    return max(MIN_BATCH_VARIANT_COUNT, min(MAX_BATCH_VARIANT_COUNT, count))
+
+
+def _clone_post_for_variant(db: Session, post: Post) -> Post:
+    """Creates one additional sibling Post row for batch mode (Issue #106)
+    — same brand as the triggering post, but deliberately with no
+    calendar_event_id of its own. packages/agents/pipeline/trigger.py's
+    _get_or_create_post() looks up "the Post for this calendar event" with
+    a plain .first() query, assuming exactly one Post per calendar event;
+    giving every sibling variant the same calendar_event_id as the
+    original would silently break that assumption for a flow batch mode
+    isn't even wired into yet (the calendar-triggered flow never sets
+    generation_options — see module docstring). current_pipeline_stage is
+    set explicitly to GENERATION since this row is created mid-node,
+    outside run_pipeline's normal "set current_pipeline_stage after each
+    node completes" bookkeeping (graph.py) — it never runs through this
+    graph itself, so nothing else would ever set it."""
+    clone = Post(brand_id=post.brand_id, current_pipeline_stage=PipelineStage.GENERATION)
+    db.add(clone)
+    db.flush()
+    db.refresh(clone)
+    return clone
+
+
+def _generate_batch_output(
+    db: Session, post: Post, creative_brief: dict[str, Any], variant_count: int
+) -> dict[str, Any]:
+    """Batch mode's entry point (Issue #106): runs _generation_output's
+    exact same single-variant copy+media generation pass once per variant
+    — the post this run was invoked for becomes variant 1, and
+    (variant_count - 1) additional sibling Posts (_clone_post_for_variant)
+    supply the rest — tagging every variant with a shared, freshly
+    generated variant_group_id and a 1-based variant_index (see
+    apps/api/models/post.py) so they can be queried together later.
+
+    Returns the same generation_output shape build_generation_node's
+    caller already relies on for the default path — "model"/"tokens"/
+    "cost"/"latency_ms" (summed/aggregated across every variant, since
+    graph.py's run_pipeline still logs exactly one AgentRun row for the
+    generation stage regardless of variant count) plus "post_id" — with
+    "batch"/"variant_group_id"/"variant_count"/"variants" added on top so
+    a caller can tell this was a batch run and see every variant it
+    produced.
+    """
+    variant_group_id = uuid.uuid4()
+    variant_posts = [post] + [_clone_post_for_variant(db, post) for _ in range(variant_count - 1)]
+
+    variants: list[dict[str, Any]] = []
+    for index, variant_post in enumerate(variant_posts, start=1):
+        variant_post.variant_group_id = variant_group_id
+        variant_post.variant_index = index
+        variants.append(_generation_output(db, variant_post, creative_brief))
+
+    return {
+        "post_id": str(post.id),
+        "batch": True,
+        "variant_group_id": str(variant_group_id),
+        "variant_count": len(variants),
+        "variants": variants,
+        "model": variants[0]["model"],
+        "tokens": sum(variant["tokens"] for variant in variants),
+        "cost": round(sum(variant["cost"] for variant in variants), 6),
+        "latency_ms": sum(variant["latency_ms"] for variant in variants),
+    }
+
+
 def build_generation_node(db: Session | None):
     """Builds the real "generation" stage node function, closing over
     `db`. Mirrors research_engine.py/creative_engine.py's factory shape
@@ -489,7 +676,21 @@ def build_generation_node(db: Session | None):
             )
 
         creative_brief = state.get("creative_brief") or {}
-        output = _generation_output(db, post, creative_brief)
+        generation_options = state.get("generation_options") or {}
+
+        # Batch mode (Issue #106) is opt-in only — see module docstring's
+        # "Batch mode" section. Absent (or falsy) generation_options.batch,
+        # this is the exact same single-Post/PostVersion call as before
+        # #106, unchanged, so the calendar-slot-triggered flow
+        # (packages/agents/pipeline/trigger.py) and
+        # apps/api/routers/review.py's resume calls keep behaving
+        # identically.
+        if generation_options.get("batch"):
+            variant_count = _resolve_variant_count(generation_options)
+            output = _generate_batch_output(db, post, creative_brief, variant_count)
+        else:
+            output = _generation_output(db, post, creative_brief)
+
         return {
             "completed_stages": [*state.get("completed_stages", []), "generation"],
             "generation_output": output,
