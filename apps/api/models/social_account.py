@@ -15,6 +15,9 @@ class SocialPlatform(str, enum.Enum):
     INSTAGRAM = "instagram"
     THREADS = "threads"
     FACEBOOK = "facebook"
+    YOUTUBE = "youtube"
+    TIKTOK = "tiktok"
+    PINTEREST = "pinterest"
 
 
 class SocialAccountStatus(str, enum.Enum):

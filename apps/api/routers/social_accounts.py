@@ -22,6 +22,25 @@ WRITE_ROLES = (UserRole.OWNER, UserRole.ADMIN, UserRole.EDITOR)
 STATE_PURPOSE = "social_oauth_connect"
 STATE_EXPIRES_MINUTES = 10
 
+# Every platform this connect/callback pair is wired for, keyed by the
+# `platform` path segment used in both the /connect and the vendor
+# redirect_uri, alongside the SocialAccount.platform enum member it maps
+# to, the Settings attribute holding its redirect_uri, and whether its
+# OAuth flow needs PKCE (only TikTok's does among the platforms below —
+# see TikTokProvider's docstring). Issue #138. Deliberately excludes
+# LinkedIn (kept as its own explicit endpoint pair below, unchanged, since
+# it predates this table) and X (issue #120/PR #121 owns that wiring
+# separately, to avoid two in-flight PRs racing to define the same
+# endpoint).
+_PLATFORM_CONFIG: dict[str, tuple[SocialPlatform, str, bool]] = {
+    "instagram": (SocialPlatform.INSTAGRAM, "instagram_redirect_uri", False),
+    "threads": (SocialPlatform.THREADS, "threads_redirect_uri", False),
+    "facebook": (SocialPlatform.FACEBOOK, "facebook_redirect_uri", False),
+    "youtube": (SocialPlatform.YOUTUBE, "youtube_redirect_uri", False),
+    "tiktok": (SocialPlatform.TIKTOK, "tiktok_redirect_uri", True),
+    "pinterest": (SocialPlatform.PINTEREST, "pinterest_redirect_uri", False),
+}
+
 
 def _get_org_brand(db: Session, brand_id: uuid.UUID, org_id: str) -> Brand:
     brand = (
@@ -86,6 +105,32 @@ def _verify_state(state: str, platform: str) -> uuid.UUID:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth state") from None
 
 
+def _upsert_social_account(
+    db: Session, brand_id: uuid.UUID, platform: SocialPlatform, tokens
+) -> SocialAccount:
+    account = (
+        db.query(SocialAccount)
+        .filter(SocialAccount.brand_id == brand_id, SocialAccount.platform == platform)
+        .first()
+    )
+    if account is None:
+        account = SocialAccount(brand_id=brand_id, platform=platform)
+        db.add(account)
+
+    account.external_account_id = tokens.external_account_id
+    account.access_token_encrypted = encrypt_token(tokens.access_token)
+    account.refresh_token_encrypted = (
+        encrypt_token(tokens.refresh_token) if tokens.refresh_token else None
+    )
+    account.token_expires_at = tokens.expires_at
+    account.scopes = tokens.scopes
+    account.status = SocialAccountStatus.ACTIVE
+
+    db.flush()
+    db.refresh(account)
+    return account
+
+
 @router.get("/brands/{brand_id}/social-accounts", response_model=list[SocialAccountRead])
 def list_social_accounts(
     brand_id: uuid.UUID,
@@ -143,6 +188,58 @@ def linkedin_callback(
     return _upsert_social_account(db, brand_id, SocialPlatform.LINKEDIN, tokens)
 
 
+def _make_connect_endpoint(platform: str, social_platform: SocialPlatform, redirect_attr: str):
+    def _connect(
+        brand_id: uuid.UUID,
+        db: Session = Depends(get_db),
+        current_user: CurrentUser = Depends(require_role(*WRITE_ROLES)),
+    ) -> AuthorizeUrlRead:
+        _get_org_brand(db, brand_id, current_user.org_id)
+        settings = get_settings()
+        redirect_uri = getattr(settings, redirect_attr)
+        if not redirect_uri:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"{platform.capitalize()} OAuth is not configured",
+            )
+
+        provider = get_social_oauth_provider(platform)
+        state = _create_state(brand_id, platform)
+        url = provider.authorize_url(state=state, redirect_uri=redirect_uri)
+        return AuthorizeUrlRead(authorize_url=url)
+
+    _connect.__name__ = f"connect_{platform}"
+    return _connect
+
+
+def _make_callback_endpoint(
+    platform: str, social_platform: SocialPlatform, redirect_attr: str, requires_pkce: bool
+):
+    def _callback(
+        code: str = Query(...),
+        state: str = Query(...),
+        db: Session = Depends(get_db),
+    ) -> SocialAccount:
+        brand_id = _verify_state(state, platform)
+        settings = get_settings()
+        redirect_uri = getattr(settings, redirect_attr) or ""
+        provider = get_social_oauth_provider(platform)
+        # `state` doubles as the PKCE code_verifier for platforms that
+        # require it (currently only TikTok) — same "state is already
+        # unique per request, single-use, and round-trips unmodified
+        # through the redirect" reasoning XProvider's own PKCE handling
+        # uses. Every other provider's exchange_code ignores this kwarg.
+        tokens = provider.exchange_code(
+            code=code,
+            redirect_uri=redirect_uri,
+            code_verifier=state if requires_pkce else None,
+        )
+        return _upsert_social_account(db, brand_id, social_platform, tokens)
+
+    _callback.__name__ = f"{platform}_callback"
+    return _callback
+
+
 @router.post(
     "/brands/{brand_id}/social-accounts/x/connect",
     response_model=AuthorizeUrlRead,
@@ -185,30 +282,14 @@ def x_callback(
     return _upsert_social_account(db, brand_id, SocialPlatform.X, tokens)
 
 
-def _upsert_social_account(
-    db: Session, brand_id: uuid.UUID, platform: SocialPlatform, tokens
-) -> SocialAccount:
-    account = (
-        db.query(SocialAccount)
-        .filter(SocialAccount.brand_id == brand_id, SocialAccount.platform == platform)
-        .first()
+for _platform, (_social_platform, _redirect_attr, _requires_pkce) in _PLATFORM_CONFIG.items():
+    router.post(
+        f"/brands/{{brand_id}}/social-accounts/{_platform}/connect",
+        response_model=AuthorizeUrlRead,
+    )(_make_connect_endpoint(_platform, _social_platform, _redirect_attr))
+    router.get(f"/oauth/{_platform}/callback", response_model=SocialAccountRead)(
+        _make_callback_endpoint(_platform, _social_platform, _redirect_attr, _requires_pkce)
     )
-    if account is None:
-        account = SocialAccount(brand_id=brand_id, platform=platform)
-        db.add(account)
-
-    account.external_account_id = tokens.external_account_id
-    account.access_token_encrypted = encrypt_token(tokens.access_token)
-    account.refresh_token_encrypted = (
-        encrypt_token(tokens.refresh_token) if tokens.refresh_token else None
-    )
-    account.token_expires_at = tokens.expires_at
-    account.scopes = tokens.scopes
-    account.status = SocialAccountStatus.ACTIVE
-
-    db.flush()
-    db.refresh(account)
-    return account
 
 
 def _connect_platform(

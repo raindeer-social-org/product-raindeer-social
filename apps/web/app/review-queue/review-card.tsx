@@ -103,15 +103,26 @@ function platformReviews(feedback: ReviewFeedback): Record<string, PlatformRevie
   return {};
 }
 
+// A review has something worth regenerating from only when at least one
+// platform actually flagged an issue or suggested a concrete edit — an
+// all-clear review has nothing for Kavi to act on.
+function hasActionableFeedback(feedback: ReviewFeedback | null): boolean {
+  if (!feedback) return false;
+  return Object.values(platformReviews(feedback)).some(
+    (review) => (review.issues && review.issues.length > 0) || Boolean(review.suggested_edits)
+  );
+}
+
 interface ReviewCardProps {
   post: ReviewQueuePost;
   onApprove: (postId: string, comments: string) => Promise<void>;
   onReject: (postId: string, comments: string) => Promise<void>;
   onEdit: (postId: string, bodyText: Record<string, string>) => Promise<void>;
   onReschedule: (postId: string, targetDatetimeIso: string) => Promise<void>;
+  onRegenerate: (postId: string) => Promise<void>;
 }
 
-export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule }: ReviewCardProps) {
+export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule, onRegenerate }: ReviewCardProps) {
   const [comments, setComments] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [draftBody, setDraftBody] = useState<Record<string, string>>(post.body_text ?? {});
@@ -150,6 +161,10 @@ export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule }: 
       await onEdit(post.id, draftBody);
       setIsEditing(false);
     });
+  }
+
+  function handleRegenerate() {
+    run(() => onRegenerate(post.id));
   }
 
   function handleSaveReschedule() {
@@ -386,6 +401,17 @@ export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule }: 
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line-faint bg-canvas px-5 py-4">
+        {hasActionableFeedback(aiReview) && (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleRegenerate}
+            disabled={isSubmitting}
+            title="Ask Kavi to rewrite this draft using Neer's feedback above"
+          >
+            Regenerate with Neer&apos;s feedback
+          </Button>
+        )}
         {!isEditing && (
           <Button
             type="button"

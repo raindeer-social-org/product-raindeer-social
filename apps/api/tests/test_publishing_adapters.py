@@ -10,8 +10,12 @@ from packages.integrations.social.base import PublishResult, SocialPublisher
 from packages.integrations.social.facebook_provider import FacebookProvider
 from packages.integrations.social.instagram_provider import InstagramProvider
 from packages.integrations.social.linkedin_provider import LinkedInProvider
+from packages.integrations.social.pinterest_provider import PinterestProvider
+from packages.integrations.social.threads_provider import ThreadsProvider
+from packages.integrations.social.tiktok_provider import TikTokProvider
 from packages.integrations.social.threads_provider import ThreadsProvider
 from packages.integrations.social.x_provider import XProvider
+from packages.integrations.social.youtube_provider import YouTubeProvider
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -25,6 +29,10 @@ VENDOR_MARKERS = {
     "twitter.com": ("x_provider.py",),
     "facebook.com": ("facebook_provider.py", "instagram_provider.py"),
     "threads.net": ("threads_provider.py",),
+    "googleapis.com": ("youtube_provider.py",),
+    "tiktok.com": ("tiktok_provider.py",),
+    "tiktokapis.com": ("tiktok_provider.py",),
+    "pinterest.com": ("pinterest_provider.py",),
 }
 
 ALLOWED_FILES = {
@@ -33,6 +41,9 @@ ALLOWED_FILES = {
     "facebook_provider.py",
     "instagram_provider.py",
     "threads_provider.py",
+    "youtube_provider.py",
+    "tiktok_provider.py",
+    "pinterest_provider.py",
 }
 
 
@@ -103,9 +114,36 @@ def test_registry_resolves_threads_publisher() -> None:
     assert isinstance(get_social_publisher("threads"), ThreadsProvider)
 
 
+def test_youtube_provider_implements_social_publisher() -> None:
+    provider = YouTubeProvider(client_id="cid", client_secret="secret")
+    assert isinstance(provider, SocialPublisher)
+
+
+def test_tiktok_provider_implements_social_publisher() -> None:
+    provider = TikTokProvider(client_key="key", client_secret="secret")
+    assert isinstance(provider, SocialPublisher)
+
+
+def test_pinterest_provider_implements_social_publisher() -> None:
+    provider = PinterestProvider(client_id="cid", client_secret="secret")
+    assert isinstance(provider, SocialPublisher)
+
+
+def test_registry_resolves_youtube_publisher() -> None:
+    assert isinstance(get_social_publisher("youtube"), YouTubeProvider)
+
+
+def test_registry_resolves_tiktok_publisher() -> None:
+    assert isinstance(get_social_publisher("tiktok"), TikTokProvider)
+
+
+def test_registry_resolves_pinterest_publisher() -> None:
+    assert isinstance(get_social_publisher("pinterest"), PinterestProvider)
+
+
 def test_registry_unknown_platform_raises() -> None:
     with pytest.raises(ValueError, match="Unknown social platform"):
-        get_social_publisher("tiktok")
+        get_social_publisher("snapchat")
 
 
 def test_no_other_file_references_linkedin_or_x_vendor_urls() -> None:
@@ -1582,3 +1620,402 @@ def test_threads_get_engagement_logs_integration_call(db_session) -> None:
     )
     assert logged is not None
     assert logged.success is True
+
+
+# ---------------------------------------------------------------------
+# YouTube: OAuth
+# ---------------------------------------------------------------------
+
+
+def test_youtube_authorize_url_includes_offline_access_and_scopes() -> None:
+    provider = YouTubeProvider(client_id="cid", client_secret="secret")
+
+    url = provider.authorize_url(state="state-123", redirect_uri="https://app.test/callback")
+
+    assert url.startswith("https://accounts.google.com/o/oauth2/v2/auth")
+    assert "access_type=offline" in url
+    assert "state=state-123" in url
+    assert "youtube.upload" in url
+
+
+def test_youtube_exchange_code_returns_tokens_and_fetches_channel_id() -> None:
+    provider = YouTubeProvider(client_id="cid", client_secret="secret")
+    token_response = _mock_response(
+        {
+            "access_token": "at-123",
+            "refresh_token": "rt-123",
+            "expires_in": 3600,
+            "scope": "https://www.googleapis.com/auth/youtube.upload",
+        }
+    )
+    channels_response = _mock_response({"items": [{"id": "channel-1"}]})
+
+    with patch("httpx.post", return_value=token_response), patch(
+        "httpx.get", return_value=channels_response
+    ):
+        tokens = provider.exchange_code(code="auth-code", redirect_uri="https://app.test/callback")
+
+    assert tokens.access_token == "at-123"
+    assert tokens.refresh_token == "rt-123"
+    assert tokens.external_account_id == "channel-1"
+    assert tokens.expires_at is not None
+
+
+def test_youtube_is_token_valid_true_on_200() -> None:
+    provider = YouTubeProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response({"expires_in": 100})):
+        assert provider.is_token_valid("good-token") is True
+
+
+def test_youtube_is_token_valid_false_when_platform_rejects_it() -> None:
+    provider = YouTubeProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=400)):
+        assert provider.is_token_valid("bad-token") is False
+
+
+# ---------------------------------------------------------------------
+# YouTube: publish() / get_engagement()
+# ---------------------------------------------------------------------
+
+
+def test_youtube_publish_without_media_fails_without_any_http_call() -> None:
+    provider = YouTubeProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.post") as mock_post, patch("httpx.get") as mock_get:
+        result = provider.publish(access_token="good-token", content="hello")
+
+    assert result.success is False
+    assert "media_urls" in (result.error or "").lower() or "video" in (result.error or "").lower()
+    mock_post.assert_not_called()
+    mock_get.assert_not_called()
+
+
+def test_youtube_publish_success_returns_populated_result(db_session) -> None:
+    provider = YouTubeProvider(client_id="cid", client_secret="secret")
+    session_response = _mock_response(headers={"Location": "https://upload.example/session-1"})
+    put_response = _mock_response({"id": "video-1"})
+
+    with patch("httpx.get", return_value=MagicMock(content=b"fake-video-bytes")), patch(
+        "httpx.post", return_value=session_response
+    ), patch("httpx.put", return_value=put_response):
+        result = provider.publish(
+            access_token="good-token", content="My video", media_urls=["https://cdn.test/video.mp4"]
+        )
+
+    assert result.success is True
+    assert result.platform_post_id == "video-1"
+    assert result.platform_post_url == "https://youtube.com/watch?v=video-1"
+
+
+def test_youtube_publish_success_logs_integration_call(db_session) -> None:
+    provider = YouTubeProvider(client_id="cid", client_secret="secret")
+    session_response = _mock_response(headers={"Location": "https://upload.example/session-1"})
+    put_response = _mock_response({"id": "video-1"})
+
+    with patch("httpx.get", return_value=MagicMock(content=b"fake-video-bytes")), patch(
+        "httpx.post", return_value=session_response
+    ), patch("httpx.put", return_value=put_response):
+        provider.publish(
+            access_token="good-token", content="My video", media_urls=["https://cdn.test/video.mp4"]
+        )
+
+    logged = (
+        db_session.query(IntegrationCall)
+        .filter_by(provider="youtube", capability="publish")
+        .order_by(IntegrationCall.created_at.desc())
+        .first()
+    )
+    assert logged is not None
+    assert logged.success is True
+
+
+def test_youtube_get_engagement_success_returns_metrics(db_session) -> None:
+    provider = YouTubeProvider(client_id="cid", client_secret="secret")
+
+    with patch(
+        "httpx.get",
+        return_value=_mock_response(
+            {"items": [{"statistics": {"likeCount": "5", "commentCount": "2", "viewCount": "100"}}]}
+        ),
+    ):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="video-1")
+
+    assert result.success is True
+    assert result.metrics.likes == 5
+    assert result.metrics.comments == 2
+    assert result.metrics.impressions == 100
+    assert result.metrics.shares == 0
+
+
+def test_youtube_get_engagement_rate_limited_returns_flag_not_raise(db_session) -> None:
+    provider = YouTubeProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=429)):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="video-1")
+
+    assert result.success is False
+    assert result.rate_limited is True
+
+
+# ---------------------------------------------------------------------
+# TikTok: OAuth (PKCE)
+# ---------------------------------------------------------------------
+
+
+def test_tiktok_authorize_url_includes_s256_code_challenge() -> None:
+    provider = TikTokProvider(client_key="key", client_secret="secret")
+
+    url = provider.authorize_url(state="verifier-state", redirect_uri="https://app.test/callback")
+
+    assert url.startswith("https://www.tiktok.com/v2/auth/authorize/")
+    assert "code_challenge_method=S256" in url
+    assert "state=verifier-state" in url
+    # The challenge must be a deterministic function of the verifier, not
+    # the raw verifier itself (unlike XProvider's "plain" shortcut).
+    assert "verifier-state" not in url.split("code_challenge=")[1].split("&")[0]
+
+
+def test_tiktok_exchange_code_requires_code_verifier() -> None:
+    provider = TikTokProvider(client_key="key", client_secret="secret")
+
+    with pytest.raises(ValueError, match="code_verifier"):
+        provider.exchange_code(code="auth-code", redirect_uri="https://app.test/callback")
+
+
+def test_tiktok_exchange_code_returns_tokens() -> None:
+    provider = TikTokProvider(client_key="key", client_secret="secret")
+    token_response = _mock_response(
+        {
+            "access_token": "at-123",
+            "refresh_token": "rt-123",
+            "expires_in": 86400,
+            "open_id": "tiktok-user-1",
+            "scope": "user.info.basic,video.publish",
+        }
+    )
+
+    with patch("httpx.post", return_value=token_response) as mock_post:
+        tokens = provider.exchange_code(
+            code="auth-code", redirect_uri="https://app.test/callback", code_verifier="verifier-state"
+        )
+
+    assert tokens.access_token == "at-123"
+    assert tokens.external_account_id == "tiktok-user-1"
+    assert mock_post.call_args.kwargs["data"]["code_verifier"] == "verifier-state"
+
+
+def test_tiktok_is_token_valid_true_on_200() -> None:
+    provider = TikTokProvider(client_key="key", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response({"data": {}})):
+        assert provider.is_token_valid("good-token") is True
+
+
+def test_tiktok_is_token_valid_false_when_platform_rejects_it() -> None:
+    provider = TikTokProvider(client_key="key", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=401)):
+        assert provider.is_token_valid("bad-token") is False
+
+
+# ---------------------------------------------------------------------
+# TikTok: publish() / get_engagement()
+# ---------------------------------------------------------------------
+
+
+def test_tiktok_publish_without_media_fails_without_any_http_call() -> None:
+    provider = TikTokProvider(client_key="key", client_secret="secret")
+
+    with patch("httpx.post") as mock_post:
+        result = provider.publish(access_token="good-token", content="hello")
+
+    assert result.success is False
+    mock_post.assert_not_called()
+
+
+def test_tiktok_publish_success_returns_populated_result(db_session) -> None:
+    provider = TikTokProvider(client_key="key", client_secret="secret")
+
+    with patch("httpx.post", return_value=_mock_response({"data": {"publish_id": "pub-1"}})):
+        result = provider.publish(
+            access_token="good-token", content="caption", media_urls=["https://cdn.test/video.mp4"]
+        )
+
+    assert result.success is True
+    assert result.platform_post_id == "pub-1"
+
+
+def test_tiktok_publish_success_logs_integration_call(db_session) -> None:
+    provider = TikTokProvider(client_key="key", client_secret="secret")
+
+    with patch("httpx.post", return_value=_mock_response({"data": {"publish_id": "pub-1"}})):
+        provider.publish(
+            access_token="good-token", content="caption", media_urls=["https://cdn.test/video.mp4"]
+        )
+
+    logged = (
+        db_session.query(IntegrationCall)
+        .filter_by(provider="tiktok", capability="publish")
+        .order_by(IntegrationCall.created_at.desc())
+        .first()
+    )
+    assert logged is not None
+    assert logged.success is True
+
+
+def test_tiktok_get_engagement_success_returns_metrics(db_session) -> None:
+    provider = TikTokProvider(client_key="key", client_secret="secret")
+
+    with patch(
+        "httpx.post",
+        return_value=_mock_response(
+            {
+                "data": {
+                    "videos": [
+                        {"like_count": 10, "comment_count": 3, "share_count": 4, "view_count": 200}
+                    ]
+                }
+            }
+        ),
+    ):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="pub-1")
+
+    assert result.success is True
+    assert result.metrics.likes == 10
+    assert result.metrics.shares == 4
+    assert result.metrics.impressions == 200
+
+
+def test_tiktok_get_engagement_rate_limited_returns_flag_not_raise(db_session) -> None:
+    provider = TikTokProvider(client_key="key", client_secret="secret")
+
+    with patch("httpx.post", return_value=_mock_response(status_code=429)):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="pub-1")
+
+    assert result.success is False
+    assert result.rate_limited is True
+
+
+# ---------------------------------------------------------------------
+# Pinterest: OAuth
+# ---------------------------------------------------------------------
+
+
+def test_pinterest_authorize_url_includes_state_and_scopes() -> None:
+    provider = PinterestProvider(client_id="cid", client_secret="secret")
+
+    url = provider.authorize_url(state="state-123", redirect_uri="https://app.test/callback")
+
+    assert url.startswith("https://www.pinterest.com/oauth/")
+    assert "state=state-123" in url
+    assert "pins%3Awrite" in url or "pins:write" in url
+
+
+def test_pinterest_exchange_code_returns_tokens_and_fetches_username() -> None:
+    provider = PinterestProvider(client_id="cid", client_secret="secret")
+    token_response = _mock_response(
+        {"access_token": "at-123", "refresh_token": "rt-123", "expires_in": 2592000, "scope": "pins:write"}
+    )
+    account_response = _mock_response({"username": "acme"})
+
+    with patch("httpx.post", return_value=token_response), patch(
+        "httpx.get", return_value=account_response
+    ):
+        tokens = provider.exchange_code(code="auth-code", redirect_uri="https://app.test/callback")
+
+    assert tokens.access_token == "at-123"
+    assert tokens.external_account_id == "acme"
+
+
+def test_pinterest_is_token_valid_true_on_200() -> None:
+    provider = PinterestProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response({"username": "acme"})):
+        assert provider.is_token_valid("good-token") is True
+
+
+def test_pinterest_is_token_valid_false_when_platform_rejects_it() -> None:
+    provider = PinterestProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=401)):
+        assert provider.is_token_valid("bad-token") is False
+
+
+# ---------------------------------------------------------------------
+# Pinterest: publish() / get_engagement()
+# ---------------------------------------------------------------------
+
+
+def test_pinterest_publish_without_media_fails_without_any_http_call() -> None:
+    provider = PinterestProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.post") as mock_post, patch("httpx.get") as mock_get:
+        result = provider.publish(access_token="good-token", content="hello")
+
+    assert result.success is False
+    mock_post.assert_not_called()
+    mock_get.assert_not_called()
+
+
+def test_pinterest_publish_success_returns_populated_result(db_session) -> None:
+    provider = PinterestProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response({"items": [{"id": "board-1"}]})), patch(
+        "httpx.post", return_value=_mock_response({"id": "pin-1"})
+    ):
+        result = provider.publish(
+            access_token="good-token", content="caption", media_urls=["https://cdn.test/image.png"]
+        )
+
+    assert result.success is True
+    assert result.platform_post_id == "pin-1"
+    assert result.platform_post_url == "https://pinterest.com/pin/pin-1"
+
+
+def test_pinterest_publish_success_logs_integration_call(db_session) -> None:
+    provider = PinterestProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response({"items": [{"id": "board-1"}]})), patch(
+        "httpx.post", return_value=_mock_response({"id": "pin-1"})
+    ):
+        provider.publish(
+            access_token="good-token", content="caption", media_urls=["https://cdn.test/image.png"]
+        )
+
+    logged = (
+        db_session.query(IntegrationCall)
+        .filter_by(provider="pinterest", capability="publish")
+        .order_by(IntegrationCall.created_at.desc())
+        .first()
+    )
+    assert logged is not None
+    assert logged.success is True
+
+
+def test_pinterest_get_engagement_success_returns_metrics(db_session) -> None:
+    provider = PinterestProvider(client_id="cid", client_secret="secret")
+
+    with patch(
+        "httpx.get",
+        return_value=_mock_response(
+            {"all": {"summary_metrics": {"IMPRESSION": 100, "SAVE": 8, "OUTBOUND_CLICK": 3}}}
+        ),
+    ):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="pin-1")
+
+    assert result.success is True
+    assert result.metrics.likes == 8
+    assert result.metrics.shares == 3
+    assert result.metrics.impressions == 100
+
+
+def test_pinterest_get_engagement_rate_limited_returns_flag_not_raise(db_session) -> None:
+    provider = PinterestProvider(client_id="cid", client_secret="secret")
+
+    with patch("httpx.get", return_value=_mock_response(status_code=429)):
+        result = provider.get_engagement(access_token="good-token", platform_post_id="pin-1")
+
+    assert result.success is False
+    assert result.rate_limited is True

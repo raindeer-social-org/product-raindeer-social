@@ -15,6 +15,9 @@ const connectXMock = vi.fn();
 const connectInstagramMock = vi.fn();
 const connectThreadsMock = vi.fn();
 const connectFacebookMock = vi.fn();
+const connectYouTubeMock = vi.fn();
+const connectTikTokMock = vi.fn();
+const connectPinterestMock = vi.fn();
 const disconnectSocialAccountMock = vi.fn();
 
 vi.mock("@/lib/api", async () => {
@@ -28,6 +31,9 @@ vi.mock("@/lib/api", async () => {
     connectInstagram: (...args: unknown[]) => connectInstagramMock(...args),
     connectThreads: (...args: unknown[]) => connectThreadsMock(...args),
     connectFacebook: (...args: unknown[]) => connectFacebookMock(...args),
+    connectYouTube: (...args: unknown[]) => connectYouTubeMock(...args),
+    connectTikTok: (...args: unknown[]) => connectTikTokMock(...args),
+    connectPinterest: (...args: unknown[]) => connectPinterestMock(...args),
     disconnectSocialAccount: (...args: unknown[]) => disconnectSocialAccountMock(...args),
   };
 });
@@ -81,23 +87,26 @@ function renderPage() {
   );
 }
 
+// Every platform this panel lists now has a real backend OAuth provider
+// (apps/api/routers/social_accounts.py) — Issue #138 added YouTube/TikTok/
+// Pinterest alongside the LinkedIn/X/Instagram/Threads/Facebook providers
+// #91/#118/#121 already wired up. Nothing left to show as "coming soon".
 const CONNECT_MOCKS = {
   LinkedIn: connectLinkedInMock,
   X: connectXMock,
   Instagram: connectInstagramMock,
   Threads: connectThreadsMock,
   Facebook: connectFacebookMock,
+  YouTube: connectYouTubeMock,
+  TikTok: connectTikTokMock,
+  Pinterest: connectPinterestMock,
 } as const;
 
 describe("SocialAccountsPage", () => {
   beforeEach(() => {
     fetchBrandsMock.mockReset();
     fetchSocialAccountsMock.mockReset();
-    connectLinkedInMock.mockReset();
-    connectXMock.mockReset();
-    connectInstagramMock.mockReset();
-    connectThreadsMock.mockReset();
-    connectFacebookMock.mockReset();
+    for (const mock of Object.values(CONNECT_MOCKS)) mock.mockReset();
     disconnectSocialAccountMock.mockReset();
     redirectToAuthorizeUrlMock.mockReset();
 
@@ -108,7 +117,7 @@ describe("SocialAccountsPage", () => {
     fetchSocialAccountsMock.mockResolvedValue([]);
   });
 
-  it("renders connected accounts with a status badge per account, plus YouTube as coming soon", async () => {
+  it("renders connected accounts with a status badge per account", async () => {
     fetchSocialAccountsMock.mockResolvedValue([
       makeAccount({ id: "a1", status: "active" }),
       makeAccount({
@@ -135,9 +144,17 @@ describe("SocialAccountsPage", () => {
     expect(screen.getByText("Expired")).toBeInTheDocument();
     expect(screen.getByText("Revoked")).toBeInTheDocument();
 
-    // YouTube has no backend provider at all — stays an inert row.
-    expect(screen.getByText("YouTube")).toBeInTheDocument();
-    expect(screen.getByText("Coming soon")).toBeInTheDocument();
+    // All 8 platforms are real now — none render as an inert "Coming soon" row.
+    expect(screen.queryByText("Coming soon")).not.toBeInTheDocument();
+    for (const label of Object.keys(CONNECT_MOCKS)) {
+      // "X" matches both the platform name and its avatar badge initial, so
+      // it's checked with getAllByText rather than the exact-one getByText.
+      if (label === "X") {
+        expect(screen.getAllByText("X").length).toBeGreaterThan(0);
+      } else {
+        expect(screen.getByText(label)).toBeInTheDocument();
+      }
+    }
   });
 
   it("shows LinkedIn as not connected when there's no account yet", async () => {
@@ -150,7 +167,7 @@ describe("SocialAccountsPage", () => {
     await waitFor(() => expect(fetchSocialAccountsMock).toHaveBeenCalled());
     // Every platform is unconnected here, so "Not connected" renders once
     // per row — check the LinkedIn-specific connect button instead of the
-    // (ambiguous, 5x-repeated) status text.
+    // (ambiguous, 8x-repeated) status text.
     expect(await screen.findByRole("button", { name: "Connect LinkedIn" })).toBeInTheDocument();
     expect(screen.getAllByText("Not connected").length).toBeGreaterThan(0);
   });
@@ -161,6 +178,9 @@ describe("SocialAccountsPage", () => {
     ["Instagram", connectInstagramMock, "https://www.facebook.com/v21.0/dialog/oauth?foo=bar"],
     ["Threads", connectThreadsMock, "https://threads.net/oauth/authorize?foo=bar"],
     ["Facebook", connectFacebookMock, "https://www.facebook.com/v21.0/dialog/oauth?foo=bar"],
+    ["YouTube", connectYouTubeMock, "https://accounts.google.com/o/oauth2/v2/auth?foo=bar"],
+    ["TikTok", connectTikTokMock, "https://www.tiktok.com/v2/auth/authorize?foo=bar"],
+    ["Pinterest", connectPinterestMock, "https://www.pinterest.com/oauth?foo=bar"],
   ])("starts the %s OAuth flow and redirects to the authorize URL on success", async (label, mock, authorizeUrl) => {
     mock.mockResolvedValue({ authorize_url: authorizeUrl });
     const user = userEvent.setup();

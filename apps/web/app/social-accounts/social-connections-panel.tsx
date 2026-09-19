@@ -6,8 +6,11 @@ import {
   connectFacebook,
   connectInstagram,
   connectLinkedIn,
+  connectPinterest,
   connectThreads,
+  connectTikTok,
   connectX,
+  connectYouTube,
   disconnectSocialAccount,
   fetchSocialAccounts,
   type AuthorizeUrlResponse,
@@ -31,6 +34,9 @@ const PLATFORM_LABELS: Partial<Record<SocialPlatform, string>> = {
   instagram: "Instagram",
   threads: "Threads",
   facebook: "Facebook",
+  youtube: "YouTube",
+  tiktok: "TikTok",
+  pinterest: "Pinterest",
 };
 
 function platformLabel(platform: SocialPlatform): string {
@@ -50,6 +56,9 @@ const PLATFORM_BADGE: Record<SocialPlatform, { initial: string; className: strin
   },
   threads: { initial: "@", className: "bg-ink-800" },
   facebook: { initial: "f", className: "bg-[#1877F2]" },
+  youtube: { initial: "YT", className: "bg-[#FF0000]" },
+  tiktok: { initial: "TT", className: "bg-ink-950" },
+  pinterest: { initial: "P", className: "bg-[#E60023]" },
 };
 
 // Platforms the UI can start a real connect flow for — every platform with
@@ -57,7 +66,16 @@ const PLATFORM_BADGE: Record<SocialPlatform, { initial: string; className: strin
 // today. Kept as a list plus a lookup table (not hardcoded per-platform
 // buttons/handlers) so a new provider is a data change here, not a
 // rewrite of this panel.
-const CONNECTABLE_PLATFORMS: SocialPlatform[] = ["linkedin", "x", "instagram", "threads", "facebook"];
+const CONNECTABLE_PLATFORMS: SocialPlatform[] = [
+  "linkedin",
+  "x",
+  "instagram",
+  "threads",
+  "facebook",
+  "youtube",
+  "tiktok",
+  "pinterest",
+];
 
 const CONNECT_HANDLERS: Partial<
   Record<SocialPlatform, (token: string, brandId: string) => Promise<AuthorizeUrlResponse>>
@@ -67,15 +85,15 @@ const CONNECT_HANDLERS: Partial<
   instagram: connectInstagram,
   threads: connectThreads,
   facebook: connectFacebook,
+  youtube: connectYouTube,
+  tiktok: connectTikTok,
+  pinterest: connectPinterest,
 };
 
-// Platforms shown for parity with the design mockup's full distribution
-// picture, but with no real connect flow behind them at all — no backend
-// work has started on YouTube. Renders only a disabled "Coming soon" pill,
-// so nothing here pretends to be more connected than it is.
-const COMING_SOON_PLATFORMS: { key: string; name: string; initial: string; className: string }[] = [
-  { key: "youtube", name: "YouTube", initial: "YT", className: "bg-[#FF0000]" },
-];
+// Every platform this panel lists now has a real backend OAuth provider
+// (apps/api/routers/social_accounts.py) — nothing left to show as
+// "coming soon".
+const COMING_SOON_PLATFORMS: { key: string; name: string; initial: string; className: string }[] = [];
 
 function formatExpiry(iso: string | null): string | null {
   if (!iso) return null;
