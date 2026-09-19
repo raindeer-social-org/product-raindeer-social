@@ -114,6 +114,49 @@ def test_editor_can_update_brand(db_session) -> None:
 
 
 @uses_test_session
+def test_editor_can_update_brand_report_and_it_reembeds(db_session) -> None:
+    """Issue #158 — the onboarding interview's editable capstone screen
+    persists edits through this same generic PATCH endpoint. An edited
+    brand_report must be re-embedded (embed_brand_report), same as a fresh
+    run_onboarding_agent synthesis, so Ved/Neer's RAG retrieval never
+    serves stale chunks."""
+    _org, user = _create_org_and_user(db_session, UserRole.EDITOR, "editor2b@acme.test")
+    created = client.post(
+        "/brands", json={"name": "Acme Widgets"}, headers=_auth_headers(user)
+    ).json()
+
+    report = {"voice_and_tone": "Playful and direct."}
+    with patch("apps.api.routers.brands.embed_brand_report") as mock_embed:
+        response = client.patch(
+            f"/brands/{created['id']}",
+            json={"brand_report": report},
+            headers=_auth_headers(user),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["brand_report"] == report
+    mock_embed.assert_called_once()
+
+
+@uses_test_session
+def test_updating_unrelated_field_does_not_reembed(db_session) -> None:
+    _org, user = _create_org_and_user(db_session, UserRole.EDITOR, "editor2c@acme.test")
+    created = client.post(
+        "/brands", json={"name": "Acme Widgets"}, headers=_auth_headers(user)
+    ).json()
+
+    with patch("apps.api.routers.brands.embed_brand_report") as mock_embed:
+        response = client.patch(
+            f"/brands/{created['id']}",
+            json={"industry": "Consumer goods"},
+            headers=_auth_headers(user),
+        )
+
+    assert response.status_code == 200
+    mock_embed.assert_not_called()
+
+
+@uses_test_session
 def test_viewer_cannot_update_brand(db_session) -> None:
     _org, user = _create_org_and_user(db_session, UserRole.EDITOR, "editor3@acme.test")
     created = client.post(

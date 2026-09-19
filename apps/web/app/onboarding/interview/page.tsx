@@ -9,6 +9,7 @@ import {
   fetchNextOnboardingQuestions,
   fetchOnboarding,
   fetchOnboardingAssets,
+  runOnboardingAgent,
   streamOnboardingResearch,
   transcribeOnboardingVoiceAnswer,
   updateBrand,
@@ -26,6 +27,7 @@ import { useBrand } from "@/lib/brand-context";
 import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { BrandIdentityCapstone } from "./brand-identity-capstone";
 import { ChipButton } from "./chip-button";
 import { SocialConnectionsPanel } from "@/app/social-accounts/social-connections-panel";
 import { DynamicQuestionCard } from "./dynamic-question-card";
@@ -155,10 +157,20 @@ export default function OnboardingInterviewPage() {
   // entirely when the user has asked for less motion.
   const prefersReducedMotion = useReducedMotion();
 
-  const [stage, setStage] = useState<"questions" | "dynamic" | "connect">("questions");
+  const [stage, setStage] = useState<"questions" | "dynamic" | "capstone" | "connect">("questions");
   const [stepIndex, setStepIndex] = useState(0);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Editable brand-identity capstone (Issue #158) — shown once, after the
+  // dynamic-questions phase finishes and Aarav's research+synthesis chain
+  // (run-agent) has produced a brand_report, right before "connect
+  // socials". isFinishingInterview covers the run-agent call itself (a
+  // real LLM chain — can take tens of seconds); isSavingCapstone covers
+  // persisting the user's edits.
+  const [brandReportDraft, setBrandReportDraft] = useState<Record<string, unknown> | null>(null);
+  const [isFinishingInterview, setIsFinishingInterview] = useState(false);
+  const [isSavingCapstone, setIsSavingCapstone] = useState(false);
 
   // Adaptive, LLM-generated follow-up questions (Issue #153) — run after
   // the fixed QUESTIONS array below. dynamicPageIndex is the page
@@ -533,24 +545,70 @@ export default function OnboardingInterviewPage() {
     }
   }
 
-  async function goToConnect() {
-    if (token && selectedBrandId) {
-      try {
-        await completeOnboarding(token, selectedBrandId);
-      } catch {
-        // Best-effort — onboarding can still be completed later from
-        // /onboarding if required fields were skipped here. Not a blocker
-        // for reaching the finishing step.
-      }
-    }
+  function goToConnect() {
     setStage("connect");
+  }
+
+  // Runs after the dynamic-questions phase reports done: marks onboarding
+  // complete, then runs Aarav's research+synthesis chain (run-agent) so
+  // there's a brand_report to show on the editable capstone screen. Never
+  // strands the user — any failure here (completeOnboarding or run-agent)
+  // falls straight through to "connect" exactly like the old behavior,
+  // since a missing/stale brand_report can still be filled in later from
+  // Brand Data.
+  async function finishInterview() {
+    if (!token || !selectedBrandId) {
+      goToConnect();
+      return;
+    }
+    try {
+      await completeOnboarding(token, selectedBrandId);
+    } catch {
+      // Best-effort — onboarding can still be completed later from
+      // /onboarding if required fields were skipped here. Not a blocker
+      // for reaching the finishing step.
+    }
+
+    setIsFinishingInterview(true);
+    try {
+      const brand = await runOnboardingAgent(token, selectedBrandId);
+      if (brand.brand_report && Object.keys(brand.brand_report).length > 0) {
+        setBrandReportDraft(brand.brand_report);
+        setStage("capstone");
+        return;
+      }
+    } catch {
+      // Research/synthesis is a real LLM chain that can fail (unconfigured
+      // provider, transient error) — degrade to skipping the capstone
+      // rather than blocking the user from finishing onboarding at all.
+    } finally {
+      setIsFinishingInterview(false);
+    }
+    goToConnect();
+  }
+
+  async function saveCapstoneAndConnect(edited: Record<string, unknown>) {
+    if (!token || !selectedBrandId) {
+      goToConnect();
+      return;
+    }
+    setIsSavingCapstone(true);
+    try {
+      await updateBrand(token, selectedBrandId, { brand_report: edited });
+      await refreshBrands();
+    } catch (err) {
+      pushToast(err instanceof ApiError ? err.message : "Failed to save your edits", "error");
+    } finally {
+      setIsSavingCapstone(false);
+    }
+    goToConnect();
   }
 
   // Loads AI-generated page `pageIndex`, first submitting `answers` (the
   // page just finished — empty on the very first call). Degrades to
   // finishing onboarding outright if the dynamic phase itself can't load,
-  // same "never strand the user" spirit as goToConnect's best-effort
-  // completeOnboarding above.
+  // same "never strand the user" spirit as finishInterview/goToConnect
+  // above.
   const loadDynamicPage = useCallback(
     async (pageIndex: number, answers: DynamicAnswerSubmit[]) => {
       if (!token || !selectedBrandId) return;
@@ -558,7 +616,7 @@ export default function OnboardingInterviewPage() {
       try {
         const result = await fetchNextOnboardingQuestions(token, selectedBrandId, pageIndex, answers);
         if (result.done || result.questions.length === 0) {
-          await goToConnect();
+          await finishInterview();
           return;
         }
         setDynamicQuestions(result.questions);
@@ -569,7 +627,7 @@ export default function OnboardingInterviewPage() {
           err instanceof ApiError ? err.message : "Couldn't load Aarav's next questions — finishing up instead.",
           "error"
         );
-        await goToConnect();
+        goToConnect();
       } finally {
         setIsDynamicLoading(false);
       }
@@ -678,7 +736,11 @@ export default function OnboardingInterviewPage() {
                 className="flex flex-col items-center gap-3 rounded-[18px] border border-line-soft bg-white p-10 text-center shadow-modal"
               >
                 <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" />
-                <p className="text-sm text-ink-400">Aarav is thinking of what to ask next…</p>
+                <p className="text-sm text-ink-400">
+                  {isFinishingInterview
+                    ? "Aarav is putting together your brand identity…"
+                    : "Aarav is thinking of what to ask next…"}
+                </p>
               </motion.div>
             ) : (
               <motion.div
@@ -710,7 +772,12 @@ export default function OnboardingInterviewPage() {
                 ))}
 
                 <div className="flex items-center justify-between border-t border-line-faint pt-[18px]">
-                  <Button variant="outline" onClick={goToConnect} disabled={isDynamicLoading}>
+                  <Button
+                    variant="outline"
+                    onClick={finishInterview}
+                    disabled={isDynamicLoading || isFinishingInterview}
+                    isLoading={isFinishingInterview}
+                  >
                     Skip to social connections
                   </Button>
                   <div className="flex items-center gap-3">
@@ -735,12 +802,37 @@ export default function OnboardingInterviewPage() {
     );
   }
 
+  if (stage === "capstone" && brandReportDraft) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-canvas from-30% to-[#EEF1FF] px-6 py-11">
+        <div className="w-full max-w-[680px]">
+          <div className="mb-2.5 flex items-center gap-2 text-[11.5px] font-bold tracking-[.12em] text-brand-600">
+            STEP 3 OF 4 · BRAND IDENTITY
+          </div>
+          <h1 className="mb-1.5 text-[32px] font-bold leading-[1.12] tracking-tight text-ink-950">
+            Here&apos;s what Aarav learned
+          </h1>
+          <p className="mb-6 text-sm text-ink-400">
+            This is your brand&apos;s identity doc — every other agent reads it. Edit anything before
+            continuing; you can always come back to it later from Brand Data.
+          </p>
+
+          <BrandIdentityCapstone
+            report={brandReportDraft}
+            isSaving={isSavingCapstone}
+            onContinue={saveCapstoneAndConnect}
+          />
+        </div>
+      </div>
+    );
+  }
+
   if (stage === "connect") {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-canvas from-40% to-[#EEF1FF] px-6 py-11">
         <div className="w-full max-w-[720px]">
           <div className="mb-2.5 flex items-center gap-2 text-[11.5px] font-bold tracking-[.12em] text-brand-600">
-            STEP 3 OF 3 · DISTRIBUTION
+            STEP 4 OF 4 · DISTRIBUTION
           </div>
           <h1 className="mb-1.5 text-[32px] font-bold leading-[1.12] tracking-tight text-ink-950">
             Connect where you publish
@@ -836,7 +928,13 @@ export default function OnboardingInterviewPage() {
               Question {stepIndex + 1} of {QUESTIONS.length}
             </span>
           </div>
-          <Button variant="outline" size="sm" onClick={goToConnect}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={finishInterview}
+            disabled={isFinishingInterview}
+            isLoading={isFinishingInterview}
+          >
             Skip to social connections
           </Button>
         </div>

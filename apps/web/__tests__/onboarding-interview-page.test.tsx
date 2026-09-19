@@ -25,6 +25,7 @@ const fetchOnboardingAssetsMock = vi.fn();
 const uploadOnboardingAssetMock = vi.fn();
 const transcribeOnboardingVoiceAnswerMock = vi.fn();
 const fetchNextOnboardingQuestionsMock = vi.fn();
+const runOnboardingAgentMock = vi.fn();
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
@@ -43,6 +44,7 @@ vi.mock("@/lib/api", async () => {
     uploadOnboardingAsset: (...args: unknown[]) => uploadOnboardingAssetMock(...args),
     transcribeOnboardingVoiceAnswer: (...args: unknown[]) => transcribeOnboardingVoiceAnswerMock(...args),
     fetchNextOnboardingQuestions: (...args: unknown[]) => fetchNextOnboardingQuestionsMock(...args),
+    runOnboardingAgent: (...args: unknown[]) => runOnboardingAgentMock(...args),
   };
 });
 
@@ -89,6 +91,7 @@ describe("OnboardingInterviewPage", () => {
     uploadOnboardingAssetMock.mockReset();
     transcribeOnboardingVoiceAnswerMock.mockReset();
     fetchNextOnboardingQuestionsMock.mockReset();
+    runOnboardingAgentMock.mockReset();
 
     window.localStorage.clear();
     window.localStorage.setItem("raindeer.auth.token", "test-token");
@@ -104,6 +107,11 @@ describe("OnboardingInterviewPage", () => {
     // the fixed questionnaire, so the dynamic phase should fall straight
     // through to the connect step unless a test overrides this.
     fetchNextOnboardingQuestionsMock.mockResolvedValue({ done: true, page_index: 0, questions: [] });
+    // Default: run-agent produces no usable brand_report, so
+    // finishInterview() skips the capstone screen and falls straight
+    // through to "connect" — same behavior as before Issue #158 existed.
+    // Tests exercising the capstone screen itself override this.
+    runOnboardingAgentMock.mockResolvedValue({ ...BRAND, brand_report: null });
 
     streamOnboardingResearchMock.mockImplementation(
       async (
@@ -277,6 +285,49 @@ describe("OnboardingInterviewPage", () => {
     await skipAllStaticQuestions(user);
 
     await waitFor(() => expect(fetchNextOnboardingQuestionsMock).toHaveBeenCalledWith("test-token", "brand-1", 0, []));
+    expect(await screen.findByText("Connect where you publish")).toBeInTheDocument();
+  });
+
+  // --- Editable brand-identity capstone (Issue #158) ---
+
+  it("shows the editable capstone screen when run-agent produces a brand_report, and continuing saves edits", async () => {
+    const user = userEvent.setup();
+    runOnboardingAgentMock.mockResolvedValue({
+      ...BRAND,
+      brand_report: {
+        voice_and_tone: "Confident and precise.",
+        audience: "In-house counsel at mid-market SaaS companies.",
+      },
+    });
+    renderPage();
+    await skipAllStaticQuestions(user);
+
+    expect(await screen.findByText("Here's what Aarav learned")).toBeInTheDocument();
+    await waitFor(() => expect(runOnboardingAgentMock).toHaveBeenCalledWith("test-token", "brand-1"));
+
+    const voiceField = await screen.findByDisplayValue("Confident and precise.");
+    await user.clear(voiceField);
+    await user.type(voiceField, "Warm but exacting.");
+
+    await user.click(screen.getByRole("button", { name: "Looks good — continue" }));
+
+    await waitFor(() => {
+      expect(updateBrandMock).toHaveBeenCalledWith("test-token", "brand-1", {
+        brand_report: {
+          voice_and_tone: "Warm but exacting.",
+          audience: "In-house counsel at mid-market SaaS companies.",
+        },
+      });
+    });
+    expect(await screen.findByText("Connect where you publish")).toBeInTheDocument();
+  });
+
+  it("skips the capstone screen and goes straight to connect when run-agent fails", async () => {
+    const user = userEvent.setup();
+    runOnboardingAgentMock.mockRejectedValue(new Error("LLM provider unavailable"));
+    renderPage();
+    await skipAllStaticQuestions(user);
+
     expect(await screen.findByText("Connect where you publish")).toBeInTheDocument();
   });
 
