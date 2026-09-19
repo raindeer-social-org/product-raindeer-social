@@ -27,6 +27,15 @@ class OnboardingResponse(Base):
     competitors: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     goals: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
+    # Deeper-questionnaire fields (Issue #144) — optional enrichment on top
+    # of REQUIRED_FIELDS above, feeding packages/agents/onboarding/prompts.py's
+    # synthesis prompt with more to ground the brand_report in. Not added to
+    # REQUIRED_FIELDS: onboarding can still complete without them, same as
+    # the interview UI's existing "optional" assets question.
+    mission: Mapped[str | None] = mapped_column(nullable=True)
+    content_dos_donts: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    posting_cadence: Mapped[str | None] = mapped_column(nullable=True)
+
     is_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     created_at: Mapped[datetime] = mapped_column(

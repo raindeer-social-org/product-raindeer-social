@@ -7,9 +7,11 @@ import {
   type BrandAnalyticsSummary,
   type PostAnalyticsAggregate,
   type PostAnalyticsTrend,
+  type Report,
   fetchAnalyticsSummary,
   fetchPostAnalyticsAggregate,
   fetchPostAnalyticsTrend,
+  fetchReports,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { useBrand } from "@/lib/brand-context";
@@ -35,6 +37,7 @@ import { formatAverage, formatCompactNumber, formatDateLabel, formatDateTimeLabe
 import { LineChart, type LineSeries } from "./line-chart";
 import { PlatformTable } from "./platform-table";
 import { StatTile } from "./stat-tile";
+import { WeeklyReportCard } from "./weekly-report-card";
 
 export default function AnalyticsPage() {
   const { token } = useAuth();
@@ -46,6 +49,15 @@ export default function AnalyticsPage() {
   const [isLoadingSummary, setIsLoadingSummary] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [barMetric, setBarMetric] = useState<MetricKey>("likes");
+
+  // The mockup's dark "AI weekly report" card — same real Report rows
+  // apps/web/app/reports/page.tsx renders in full, reusing its fetchReports
+  // call rather than a second endpoint. Reports are returned newest-first
+  // (see ReportsPage's own selection default of result[0]), so the first
+  // entry is the latest weekly report for this brand.
+  const [latestReport, setLatestReport] = useState<Report | null>(null);
+  const [isLoadingReport, setIsLoadingReport] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
 
   const [postIdInput, setPostIdInput] = useState("");
   const [platformFilterInput, setPlatformFilterInput] = useState("");
@@ -81,6 +93,28 @@ export default function AnalyticsPage() {
   useEffect(() => {
     loadSummary();
   }, [loadSummary]);
+
+  const loadLatestReport = useCallback(async () => {
+    if (!token || !selectedBrandId) {
+      setLatestReport(null);
+      return;
+    }
+    setIsLoadingReport(true);
+    setReportError(null);
+    try {
+      const reports = await fetchReports(token, selectedBrandId);
+      setLatestReport(reports[0] ?? null);
+    } catch (err) {
+      setReportError(err instanceof ApiError ? err.message : "Failed to load the weekly report");
+      setLatestReport(null);
+    } finally {
+      setIsLoadingReport(false);
+    }
+  }, [token, selectedBrandId]);
+
+  useEffect(() => {
+    loadLatestReport();
+  }, [loadLatestReport]);
 
   const loadPostData = useCallback(async () => {
     if (!token || !selectedBrandId || !activePostId) return;
@@ -168,7 +202,7 @@ export default function AnalyticsPage() {
         title="Analytics"
         description={
           <>
-            Showing data for: <strong className="text-slate-700">{selectedBrand.name}</strong>
+            Showing data for: <strong className="text-ink-800">{selectedBrand.name}</strong>
           </>
         }
       />
@@ -180,12 +214,12 @@ export default function AnalyticsPage() {
       </Card>
 
       <section aria-labelledby="analytics-summary-heading" className="space-y-4">
-        <h2 id="analytics-summary-heading" className="text-lg font-semibold text-slate-900">
+        <h2 id="analytics-summary-heading" className="text-lg font-semibold text-ink-950">
           Brand summary
         </h2>
 
         {summaryError ? (
-          <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+          <p role="alert" className="rounded-lg bg-danger-bg px-3 py-2 text-sm font-medium text-danger">
             {summaryError}
           </p>
         ) : null}
@@ -215,41 +249,45 @@ export default function AnalyticsPage() {
               ))}
             </div>
 
-            <Card>
-              <CardHeader
-                title="Engagement by platform"
-                description="Compare one metric across every platform this brand published to in this range."
-                action={
-                  <Field label="Metric" htmlFor="analytics-bar-metric">
-                    <Select
-                      id="analytics-bar-metric"
-                      value={barMetric}
-                      onChange={(event) => setBarMetric(event.target.value as MetricKey)}
-                    >
-                      {METRIC_KEYS.map((metric) => (
-                        <option key={metric} value={metric}>
-                          {METRIC_LABELS[metric]}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                }
-              />
-              <CardBody className="space-y-6">
-                <BarChart
-                  data={barData}
-                  formatValue={formatCompactNumber}
-                  ariaLabel={`Total ${METRIC_LABELS[barMetric].toLowerCase()} by platform`}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_330px]">
+              <Card>
+                <CardHeader
+                  title="Engagement by platform"
+                  description="Compare one metric across every platform this brand published to in this range."
+                  action={
+                    <Field label="Metric" htmlFor="analytics-bar-metric">
+                      <Select
+                        id="analytics-bar-metric"
+                        value={barMetric}
+                        onChange={(event) => setBarMetric(event.target.value as MetricKey)}
+                      >
+                        {METRIC_KEYS.map((metric) => (
+                          <option key={metric} value={metric}>
+                            {METRIC_LABELS[metric]}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  }
                 />
-                <PlatformTable platforms={summary.platforms} />
-              </CardBody>
-            </Card>
+                <CardBody className="space-y-6">
+                  <BarChart
+                    data={barData}
+                    formatValue={formatCompactNumber}
+                    ariaLabel={`Total ${METRIC_LABELS[barMetric].toLowerCase()} by platform`}
+                  />
+                  <PlatformTable platforms={summary.platforms} />
+                </CardBody>
+              </Card>
+
+              <WeeklyReportCard report={latestReport} isLoading={isLoadingReport} error={reportError} />
+            </div>
           </>
         ) : null}
       </section>
 
       <section aria-labelledby="analytics-post-heading" className="space-y-4">
-        <h2 id="analytics-post-heading" className="text-lg font-semibold text-slate-900">
+        <h2 id="analytics-post-heading" className="text-lg font-semibold text-ink-950">
           Post trend
         </h2>
         <Card>
@@ -278,7 +316,7 @@ export default function AnalyticsPage() {
                 View trend
               </Button>
             </form>
-            <p className="mt-2 text-xs text-slate-400">
+            <p className="mt-2 text-xs text-ink-300">
               There&apos;s no post picker yet — the calendar and review queue don&apos;t expose a post list either. A
               proper picker reusing one of those is a reasonable follow-up once they do; entering an id directly is
               enough to unblock this view for now.
@@ -287,7 +325,7 @@ export default function AnalyticsPage() {
         </Card>
 
         {postError ? (
-          <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+          <p role="alert" className="rounded-lg bg-danger-bg px-3 py-2 text-sm font-medium text-danger">
             {postError}
           </p>
         ) : null}
@@ -338,7 +376,7 @@ export default function AnalyticsPage() {
                 <CardBody className="overflow-x-auto">
                   <table className="w-full text-left text-sm">
                     <thead>
-                      <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-400">
+                      <tr className="border-b border-line-soft text-xs uppercase tracking-wide text-ink-300">
                         <th scope="col" className="py-2 pr-4 font-medium">
                           Polled at
                         </th>
@@ -361,13 +399,13 @@ export default function AnalyticsPage() {
                     </thead>
                     <tbody className="[font-variant-numeric:tabular-nums]">
                       {postTrend.points.map((point, i) => (
-                        <tr key={`${point.platform}-${point.polled_at}-${i}`} className="border-b border-slate-100 last:border-0">
-                          <td className="py-2 pr-4 text-slate-600">{formatDateLabel(point.polled_at)}</td>
-                          <td className="py-2 pr-4 capitalize text-slate-900">{point.platform}</td>
-                          <td className="py-2 pr-4 text-slate-600">{point.likes.toLocaleString("en-US")}</td>
-                          <td className="py-2 pr-4 text-slate-600">{point.comments.toLocaleString("en-US")}</td>
-                          <td className="py-2 pr-4 text-slate-600">{point.shares.toLocaleString("en-US")}</td>
-                          <td className="py-2 text-slate-600">{point.impressions.toLocaleString("en-US")}</td>
+                        <tr key={`${point.platform}-${point.polled_at}-${i}`} className="border-b border-line-faint last:border-0">
+                          <td className="py-2 pr-4 text-ink-600">{formatDateLabel(point.polled_at)}</td>
+                          <td className="py-2 pr-4 capitalize text-ink-950">{point.platform}</td>
+                          <td className="py-2 pr-4 text-ink-600">{point.likes.toLocaleString("en-US")}</td>
+                          <td className="py-2 pr-4 text-ink-600">{point.comments.toLocaleString("en-US")}</td>
+                          <td className="py-2 pr-4 text-ink-600">{point.shares.toLocaleString("en-US")}</td>
+                          <td className="py-2 text-ink-600">{point.impressions.toLocaleString("en-US")}</td>
                         </tr>
                       ))}
                     </tbody>

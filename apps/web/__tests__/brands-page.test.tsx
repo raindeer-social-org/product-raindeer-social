@@ -13,14 +13,25 @@ const updateBrandMock = vi.fn();
 const deleteBrandMock = vi.fn();
 const uploadBrandLogoMock = vi.fn();
 const removeBrandLogoMock = vi.fn();
+const exportBrandReportMock = vi.fn();
 
-vi.mock("@/lib/api", () => ({
-  fetchBrands: (...args: unknown[]) => fetchBrandsMock(...args),
-  createBrand: (...args: unknown[]) => createBrandMock(...args),
-  updateBrand: (...args: unknown[]) => updateBrandMock(...args),
-  deleteBrand: (...args: unknown[]) => deleteBrandMock(...args),
-  uploadBrandLogo: (...args: unknown[]) => uploadBrandLogoMock(...args),
-  removeBrandLogo: (...args: unknown[]) => removeBrandLogoMock(...args),
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+  return {
+    ...actual,
+    fetchBrands: (...args: unknown[]) => fetchBrandsMock(...args),
+    createBrand: (...args: unknown[]) => createBrandMock(...args),
+    updateBrand: (...args: unknown[]) => updateBrandMock(...args),
+    deleteBrand: (...args: unknown[]) => deleteBrandMock(...args),
+    uploadBrandLogo: (...args: unknown[]) => uploadBrandLogoMock(...args),
+    removeBrandLogo: (...args: unknown[]) => removeBrandLogoMock(...args),
+    exportBrandReport: (...args: unknown[]) => exportBrandReportMock(...args),
+  };
+});
+
+const routerPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: routerPush }),
 }));
 
 function makeBrand(overrides: Partial<Brand> = {}): Brand {
@@ -61,6 +72,8 @@ describe("BrandsPage", () => {
     deleteBrandMock.mockReset();
     uploadBrandLogoMock.mockReset();
     removeBrandLogoMock.mockReset();
+    exportBrandReportMock.mockReset();
+    routerPush.mockReset();
 
     window.localStorage.clear();
     window.localStorage.setItem("raindeer.auth.token", "test-token");
@@ -233,5 +246,55 @@ describe("BrandsPage", () => {
       expect(uploadBrandLogoMock).toHaveBeenCalledWith("test-token", "brand-1", file);
     });
     expect(fetchBrandsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders Voice/Audience/Products tag chips sourced from the real Brand fields", async () => {
+    fetchBrandsMock.mockResolvedValue([
+      makeBrand({
+        target_audience: "Early-stage founders, Startup CFOs",
+        product_catalog: { products: ["Contract review", { name: "Compliance monitor" }] },
+      }),
+    ]);
+
+    renderPage();
+
+    const card = await screen.findByRole("article", { name: "Acme Co" });
+    expect(within(card).getByText("playful")).toBeInTheDocument(); // Voice, from tone_descriptors
+    expect(within(card).getByText("Early-stage founders")).toBeInTheDocument(); // Audience, comma-split
+    expect(within(card).getByText("Startup CFOs")).toBeInTheDocument();
+    expect(within(card).getByText("Contract review")).toBeInTheDocument(); // Products, from product_catalog
+    expect(within(card).getByText("Compliance monitor")).toBeInTheDocument();
+  });
+
+  it("exports the brand report PDF via the real exportBrandReport call and opens it", async () => {
+    fetchBrandsMock.mockResolvedValue([makeBrand()]);
+    exportBrandReportMock.mockResolvedValue({
+      url: "https://cdn.example.com/report.pdf",
+      generated_at: "2026-01-02T00:00:00Z",
+    });
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const user = userEvent.setup();
+
+    renderPage();
+    const card = await screen.findByRole("article", { name: "Acme Co" });
+
+    await act(async () => {
+      await user.click(within(card).getByRole("button", { name: "Export brand PDF" }));
+    });
+
+    await waitFor(() => expect(exportBrandReportMock).toHaveBeenCalledWith("test-token", "brand-1"));
+    expect(openSpy).toHaveBeenCalledWith("https://cdn.example.com/report.pdf", "_blank", "noopener,noreferrer");
+  });
+
+  it("navigates to onboarding when re-interviewing with Aarav", async () => {
+    fetchBrandsMock.mockResolvedValue([makeBrand()]);
+    const user = userEvent.setup();
+
+    renderPage();
+    const card = await screen.findByRole("article", { name: "Acme Co" });
+
+    await user.click(within(card).getByRole("button", { name: "Re-interview with Aarav" }));
+
+    expect(routerPush).toHaveBeenCalledWith("/onboarding");
   });
 });
