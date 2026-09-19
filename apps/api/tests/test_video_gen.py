@@ -27,6 +27,7 @@ llm.py / test_generation_engine.py's conventions:
 
 import pathlib
 import uuid
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -36,6 +37,7 @@ from apps.api.models import (
     AgentRun,
     AgentType,
     Brand,
+    ContentCalendarEvent,
     IntegrationCall,
     Organization,
     Post,
@@ -494,6 +496,26 @@ def test_pipeline_run_does_not_crash_when_video_provider_fails(db_session, threa
     post = _setup_post(db_session)
     thread_cleanup.append(str(post.id))
     brief = _creative_brief(linkedin_format="short_video", x_format="text_post")
+
+    # Issues #108/#109/#110 grew SUPPORTED_PLATFORMS beyond ("linkedin",
+    # "x") to also cover Instagram/Threads/Facebook — pin this post's
+    # target_platforms explicitly via a calendar event (same as a real
+    # scheduled post would have) so Research/Creative Engine's "no
+    # calendar event" -> "all SUPPORTED_PLATFORMS" fallback doesn't pull
+    # in platforms this test's LLM mocks don't cover, which would
+    # otherwise fall through to Creative/Generation Engine's own
+    # parse-failure fallback for those extra platforms.
+    calendar_event = ContentCalendarEvent(
+        brand_id=post.brand_id,
+        title="Test event",
+        target_platforms=["linkedin", "x"],
+        desired_format="short_video",
+        target_datetime=datetime.now(timezone.utc),
+    )
+    db_session.add(calendar_event)
+    db_session.flush()
+    post.calendar_event_id = calendar_event.id
+    db_session.flush()
 
     with (
         patch(SEARCH_PATCH_TARGET) as mock_search,

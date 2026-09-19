@@ -89,6 +89,68 @@ def test_login_with_unknown_email_returns_401(db_session) -> None:
     assert response.status_code == 401
 
 
+def test_register_creates_org_and_owner_user_returning_a_working_token(db_session) -> None:
+    response = client.post(
+        "/auth/register",
+        json={
+            "first_name": "Ananya",
+            "last_name": "Rao",
+            "email": "ananya@lexstart.test",
+            "password": "correct horse battery staple",
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["token_type"] == "bearer"
+    payload = decode_access_token(body["access_token"])
+    assert payload["role"] == "owner"
+
+    user = db_session.query(User).filter(User.email == "ananya@lexstart.test").first()
+    assert user is not None
+    assert user.role == UserRole.OWNER
+    assert verify_password("correct horse battery staple", user.password_hash)
+
+    org = db_session.query(Organization).filter(Organization.id == user.organization_id).first()
+    assert org is not None
+    assert org.name == "Ananya Rao"
+
+
+def test_register_with_duplicate_email_returns_409(db_session) -> None:
+    _create_user(db_session, UserRole.OWNER, "taken@acme.test")
+
+    response = client.post(
+        "/auth/register",
+        json={
+            "first_name": "Someone",
+            "last_name": "Else",
+            "email": "taken@acme.test",
+            "password": "whatever-password",
+        },
+    )
+
+    assert response.status_code == 409
+
+
+def test_registered_user_can_immediately_log_in(db_session) -> None:
+    client.post(
+        "/auth/register",
+        json={
+            "first_name": "Ved",
+            "last_name": "Shah",
+            "email": "ved@acme.test",
+            "password": "another-strong-password",
+        },
+    )
+
+    response = client.post(
+        "/auth/login",
+        json={"email": "ved@acme.test", "password": "another-strong-password"},
+    )
+
+    assert response.status_code == 200
+
+
 def test_me_with_valid_token_returns_200(db_session) -> None:
     user = _create_user(db_session, UserRole.VIEWER, "viewer@acme.test")
     token = create_access_token(

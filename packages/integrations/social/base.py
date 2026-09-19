@@ -30,6 +30,10 @@ class SocialOAuthProvider(ABC):
         it. Optional with a None default so callers that don't need it
         (LinkedIn, Instagram, Threads, Facebook, X) aren't forced to pass
         anything."""
+        """`code_verifier` is only meaningful to PKCE-requiring providers
+        (currently XProvider, which needs the exact `state` value it put
+        in `code_challenge` at `authorize_url()` time) — providers that
+        don't use PKCE ignore it."""
         ...
 
     @abstractmethod

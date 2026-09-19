@@ -41,6 +41,7 @@ from packages.agents.pipeline.graph import run_pipeline
 from packages.agents.pipeline.nodes.generation_engine import (
     GenerationEngineError,
     build_generation_node,
+    regenerate_copy_with_feedback,
 )
 from packages.integrations.llm.base import LLMResponse
 
@@ -320,6 +321,56 @@ def test_generation_degrades_gracefully_on_unparseable_llm_output(db_session) ->
     assert set(platforms.keys()) == {"linkedin", "x"}
 
 
+# --- regenerate_copy_with_feedback (Issue #140) --------------------------
+
+
+def test_regenerate_copy_with_feedback_calls_llm_provider_only_through_interface() -> None:
+    body_text = {"linkedin": "Original draft."}
+    feedback = {"linkedin": {"issues": ["Too vague"], "suggested_edits": "Add a concrete stat."}}
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = LLMResponse(
+            text=json.dumps({"linkedin": "Revised draft with a concrete stat."}),
+            model="openrouter/free",
+            input_tokens=10,
+            output_tokens=5,
+        )
+        revised, model, tokens = regenerate_copy_with_feedback(body_text, feedback)
+
+    mock_llm.return_value.complete.assert_called_once()
+    assert revised == {"linkedin": "Revised draft with a concrete stat."}
+    assert model == "openrouter/free"
+    assert tokens == 15
+
+
+def test_regenerate_copy_with_feedback_falls_back_to_original_draft_on_llm_failure() -> None:
+    body_text = {"linkedin": "Original draft.", "x": "Original x draft."}
+    feedback = {"linkedin": {"issues": ["Too vague"], "suggested_edits": "Add a concrete stat."}}
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.side_effect = Exception("LLM provider unreachable")
+        revised, _model, tokens = regenerate_copy_with_feedback(body_text, feedback)
+
+    assert revised == body_text
+    assert tokens == 0
+
+
+def test_regenerate_copy_with_feedback_falls_back_on_unparseable_output() -> None:
+    body_text = {"linkedin": "Original draft."}
+
+    with patch(LLM_PATCH_TARGET) as mock_llm:
+        mock_llm.return_value.complete.return_value = LLMResponse(
+            text="not valid json",
+            model="openrouter/free",
+            input_tokens=1,
+            output_tokens=1,
+        )
+        revised, _model, tokens = regenerate_copy_with_feedback(body_text, {})
+
+    assert revised == body_text
+    assert tokens == 0
+
+
 # --- error handling -----------------------------------------------------
 
 
@@ -361,7 +412,24 @@ def test_generation_node_appends_to_completed_stages(db_session) -> None:
 def test_pipeline_logs_agent_run_with_agent_type_generation_including_token_and_cost(
     db_session, thread_cleanup
 ) -> None:
-    post = _setup_post(db_session)
+    from datetime import datetime, timezone
+
+    # Issues #108/#109/#110 grew SUPPORTED_PLATFORMS beyond ("linkedin",
+    # "x") — pin target_platforms explicitly via a calendar event so
+    # Research/Creative Engine's "no calendar event" -> "all
+    # SUPPORTED_PLATFORMS" fallback doesn't pull in platforms this test's
+    # LLM mocks don't cover.
+    brand = _setup_brand(db_session)
+    event = ContentCalendarEvent(
+        brand_id=brand.id,
+        title="Test event",
+        target_platforms=["linkedin", "x"],
+        desired_format="text_post",
+        target_datetime=datetime(2026, 9, 1, tzinfo=timezone.utc),
+    )
+    db_session.add(event)
+    db_session.flush()
+    post = _setup_post(db_session, brand=brand, calendar_event=event)
     thread_cleanup.append(str(post.id))
 
     with (
@@ -585,7 +653,25 @@ def test_batch_mode_still_logs_exactly_one_agent_run_row_for_generation(
     """graph.py's run_pipeline logs a single AgentRun row per stage
     regardless of how many variants batch mode produced — see
     generation_engine.py's module docstring and _generate_batch_output's."""
-    post = _setup_post(db_session)
+    from datetime import datetime, timezone
+
+    # Issues #108/#109/#110 grew SUPPORTED_PLATFORMS beyond ("linkedin",
+    # "x") — pin target_platforms explicitly via a calendar event so
+    # Research/Creative Engine's "no calendar event" -> "all
+    # SUPPORTED_PLATFORMS" fallback doesn't pull in platforms this test's
+    # LLM mocks don't cover (see the identical fix a few tests above, on
+    # test_pipeline_logs_agent_run_with_agent_type_generation_including_token_and_cost).
+    brand = _setup_brand(db_session)
+    event = ContentCalendarEvent(
+        brand_id=brand.id,
+        title="Test event",
+        target_platforms=["linkedin", "x"],
+        desired_format="text_post",
+        target_datetime=datetime(2026, 9, 1, tzinfo=timezone.utc),
+    )
+    db_session.add(event)
+    db_session.flush()
+    post = _setup_post(db_session, brand=brand, calendar_event=event)
     thread_cleanup.append(str(post.id))
 
     with (
@@ -634,7 +720,23 @@ def test_calendar_triggered_run_pipeline_default_ignores_batch_entirely(
     """run_pipeline's default call shape — no generation_options kwarg at
     all — is exactly what trigger.py uses; this pins that it still
     produces a single, non-variant Post, unaffected by #106."""
-    post = _setup_post(db_session)
+    from datetime import datetime, timezone
+
+    # See the identical fix on test_batch_mode_still_logs_exactly_one_
+    # agent_run_row_for_generation above — pin target_platforms so
+    # Creative Engine's "no calendar event" fallback doesn't ask for
+    # copy on platforms this test's LLM mocks don't cover.
+    brand = _setup_brand(db_session)
+    event = ContentCalendarEvent(
+        brand_id=brand.id,
+        title="Test event",
+        target_platforms=["linkedin", "x"],
+        desired_format="text_post",
+        target_datetime=datetime(2026, 9, 1, tzinfo=timezone.utc),
+    )
+    db_session.add(event)
+    db_session.flush()
+    post = _setup_post(db_session, brand=brand, calendar_event=event)
     thread_cleanup.append(str(post.id))
 
     with (

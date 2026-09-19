@@ -9,15 +9,15 @@ type Size = "sm" | "md" | "lg";
 
 const VARIANT_CLASSES: Record<Variant, string> = {
   primary:
-    "bg-brand-600 text-white shadow-card hover:bg-brand-700 focus-visible:outline-brand-600 disabled:bg-brand-300",
+    "bg-brand-600 text-white shadow-glow hover:bg-brand-700 focus-visible:outline-brand-600 disabled:bg-brand-300 disabled:shadow-none",
   secondary:
-    "bg-slate-900 text-white shadow-card hover:bg-slate-800 focus-visible:outline-slate-900 disabled:bg-slate-400",
+    "bg-ink-950 text-white shadow-card hover:bg-ink-900 focus-visible:outline-ink-950 disabled:bg-ink-300",
   outline:
-    "border border-slate-300 bg-white text-slate-700 shadow-sm hover:bg-slate-50 focus-visible:outline-slate-400 disabled:text-slate-400",
+    "border border-line bg-white text-ink-800 shadow-sm hover:bg-canvas focus-visible:outline-ink-200 disabled:text-ink-200",
   ghost:
-    "text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-slate-400 disabled:text-slate-300",
+    "text-ink-600 hover:bg-canvas hover:text-ink-950 focus-visible:outline-ink-200 disabled:text-ink-200",
   danger:
-    "bg-red-600 text-white shadow-card hover:bg-red-700 focus-visible:outline-red-600 disabled:bg-red-300",
+    "bg-danger text-white shadow-card hover:bg-danger/90 focus-visible:outline-danger disabled:bg-danger/40",
 };
 
 const SIZE_CLASSES: Record<Size, string> = {
@@ -39,7 +39,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       <button
         ref={ref}
         className={cn(
-          "inline-flex items-center justify-center rounded-lg font-medium transition-colors duration-150",
+          "inline-flex items-center justify-center rounded-[11px] font-semibold transition-colors duration-150",
           "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2",
           "disabled:cursor-not-allowed",
           VARIANT_CLASSES[variant],

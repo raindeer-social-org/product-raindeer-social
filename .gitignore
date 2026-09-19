@@ -61,3 +61,6 @@ Thumbs.db
 .cache/
 tmp/
 *.tmp
+
+# --- Design reference material (not app code) ---
+/Raindeer Social Startup Onboarding/

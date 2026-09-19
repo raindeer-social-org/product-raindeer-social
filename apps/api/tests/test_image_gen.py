@@ -15,12 +15,20 @@ Per the issue's acceptance criteria:
 
 import pathlib
 import uuid
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from apps.api.config import get_settings
-from apps.api.models import AgentType, Brand, IntegrationCall, Organization, Post
+from apps.api.models import (
+    AgentType,
+    Brand,
+    ContentCalendarEvent,
+    IntegrationCall,
+    Organization,
+    Post,
+)
 from packages.agents.pipeline.checkpointer import get_postgres_checkpointer
 from packages.agents.pipeline.graph import run_pipeline
 from packages.agents.pipeline.nodes.generation_engine import (
@@ -361,9 +369,26 @@ def test_image_generation_failure_does_not_crash_run_pipeline(db_session, thread
     post = _setup_post(db_session)
     thread_cleanup.append(str(post.id))
 
-    # No calendar_event_id on this Post, so Creative Engine falls back to
-    # SUPPORTED_PLATFORMS ("linkedin", "x") — both platform briefs must be
-    # mocked or Creative Engine's own parse-failure fallback kicks in.
+    # Issues #108/#109/#110 grew SUPPORTED_PLATFORMS beyond ("linkedin",
+    # "x") to also cover Instagram/Threads/Facebook — pin this post's
+    # target_platforms explicitly via a calendar event (same as a real
+    # scheduled post would have) so Research/Creative Engine's "no
+    # calendar event" -> "all SUPPORTED_PLATFORMS" fallback doesn't pull
+    # in platforms this test's LLM mocks don't cover, which would
+    # otherwise fall through to Creative/Generation Engine's own
+    # parse-failure fallback for those extra platforms.
+    calendar_event = ContentCalendarEvent(
+        brand_id=post.brand_id,
+        title="Test event",
+        target_platforms=["linkedin", "x"],
+        desired_format="image",
+        target_datetime=datetime.now(timezone.utc),
+    )
+    db_session.add(calendar_event)
+    db_session.flush()
+    post.calendar_event_id = calendar_event.id
+    db_session.flush()
+
     with (
         patch(SEARCH_PATCH_TARGET) as mock_search,
         patch(EMBED_PATCH_TARGET) as mock_embed,

@@ -6,8 +6,15 @@ from sqlalchemy.orm import Session
 from apps.api.auth.dependencies import CurrentUser, get_current_user
 from apps.api.config.database import get_db
 from apps.api.middleware.rbac import require_role
-from apps.api.models import Brand, ContentCalendarEvent, UserRole
-from apps.api.schemas.calendar import CalendarEventCreate, CalendarEventRead, CalendarEventUpdate
+from apps.api.models import AgentRun, Brand, ContentCalendarEvent, Post, ReviewFeedback, UserRole
+from apps.api.schemas.calendar import (
+    CalendarEventAgentRunRead,
+    CalendarEventCreate,
+    CalendarEventPostRead,
+    CalendarEventRead,
+    CalendarEventUpdate,
+)
+from apps.api.schemas.review import ReviewFeedbackRead
 from apps.api.services.scheduling_suggestion import (
     NoResearchSignalError,
     suggest_target_datetime,
@@ -108,6 +115,54 @@ def get_event(
 ) -> ContentCalendarEvent:
     _get_org_brand(db, brand_id, current_user.org_id)
     return _get_event_or_404(db, brand_id, event_id)
+
+
+@router.get("/{event_id}/post", response_model=CalendarEventPostRead | None)
+def get_event_post(
+    brand_id: uuid.UUID,
+    event_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CalendarEventPostRead | None:
+    """The Post the pipeline trigger (packages/agents/pipeline/trigger.py,
+    Issue #29) has generated for this calendar event, if any, plus its
+    review history and agent run trail — everything the calendar's post
+    preview modal (Issue #125) needs in one round trip rather than three.
+    Returns null (200, not 404) when no Post exists yet: a SCHEDULED event
+    the trigger hasn't claimed yet is a normal, common state, not an
+    error the caller should treat as a failure."""
+    _get_org_brand(db, brand_id, current_user.org_id)
+    event = _get_event_or_404(db, brand_id, event_id)
+
+    post = db.query(Post).filter(Post.calendar_event_id == event.id).first()
+    if post is None:
+        return None
+
+    feedback = (
+        db.query(ReviewFeedback)
+        .filter(ReviewFeedback.post_id == post.id)
+        .order_by(ReviewFeedback.created_at)
+        .all()
+    )
+    agent_runs = (
+        db.query(AgentRun)
+        .filter(AgentRun.post_id == post.id)
+        .order_by(AgentRun.created_at)
+        .all()
+    )
+
+    return CalendarEventPostRead(
+        id=post.id,
+        brand_id=post.brand_id,
+        calendar_event_id=post.calendar_event_id,
+        current_pipeline_stage=post.current_pipeline_stage,
+        body_text=post.body_text,
+        media=post.media,
+        created_at=post.created_at,
+        updated_at=post.updated_at,
+        review_feedback=[ReviewFeedbackRead.model_validate(f) for f in feedback],
+        agent_runs=[CalendarEventAgentRunRead.model_validate(r) for r in agent_runs],
+    )
 
 
 @router.patch("/{event_id}", response_model=CalendarEventRead)

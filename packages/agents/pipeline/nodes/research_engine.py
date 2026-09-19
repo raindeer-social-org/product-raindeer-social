@@ -166,6 +166,13 @@ def _brand_research_brief(
         for platform in platforms
     }
     industry_trend_results = _search_safely(f"{industry} industry trends")
+    # Pulls concrete, quotable audience pain points/questions rather than
+    # just category-level trend headlines — this is what lets downstream
+    # stages (creative/generation) write a hook that references something
+    # real instead of a generic category-level angle.
+    audience_signal_results = _search_safely(
+        f"what {industry} customers are asking about or complaining about right now"
+    )
 
     all_trend_results = [
         result for results in platform_trend_results.values() for result in results
@@ -181,8 +188,28 @@ def _brand_research_brief(
             platform: _serialize(results) for platform, results in platform_trend_results.items()
         },
         "industry_trends": _serialize(industry_trend_results),
+        "audience_signals": _serialize(audience_signal_results),
         "timing_signal": _build_timing_signal(platforms, all_trend_results, target_datetime),
     }
+
+
+def run_standalone_research(db: Session, post: Post) -> dict[str, Any]:
+    """Issue #126 — the Research workspace page's "Run new research"
+    action. Runs exactly the same research brief the pipeline node above
+    produces, but for a standalone Post created ad hoc (no calendar event,
+    no downstream Creative/Generation stages) rather than one advancing
+    through the full pipeline graph — so a brand can see fresh trend
+    results without paying for the other four stages just to view them.
+
+    A thin wrapper around _research_brief rather than a second
+    implementation: same search/brand-context logic, same degrade-on-
+    failure behavior, same output shape. The caller (apps/api/routers/
+    research.py) is responsible for creating the ad hoc Post and logging
+    the AgentRun row — this function only produces the brief, same
+    division of responsibility build_research_node's node function has
+    with run_pipeline's AgentRun-logging (see graph.py).
+    """
+    return _research_brief(db, post)
 
 
 def _research_brief(db: Session, post: Post) -> dict[str, Any]:
