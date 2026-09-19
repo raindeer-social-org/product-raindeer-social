@@ -20,6 +20,15 @@ unconfigured LLM provider must not take the pipeline down with it, so a
 failed call/parse falls back to simple copy composed from the (already
 LLM-produced) creative brief's hook + CTA rather than raising.
 
+Brand grounding (Issue #156): until this issue, Kavi was the one pipeline
+agent that read nothing off the Brand row directly — only Keshav's
+per-platform brief. It now resolves Brand alongside Post the same way
+research_engine.py/creative_engine.py/reviewer_engine.py already do, and
+threads brand.tone_descriptors/target_audience into the final-copy prompt
+and brand.colors into the image-generation prompt (_build_image_prompt) —
+Kavi is the only agent that ever triggers image generation, so the color
+palette only needs to reach that one path.
+
 Also defines generate_media_stub(): the image/video-generation hook
 called (unconditionally, whenever a platform's brief calls for it) when a
 platform's `format` is image/video/carousel. Issue #22 has replaced the
@@ -103,6 +112,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from apps.api.config import get_settings
+from apps.api.models.brand import Brand
 from apps.api.models.post import PipelineStage, Post
 from apps.api.models.post_version import PostVersion
 from packages.integrations.registry import (
@@ -166,17 +176,29 @@ def _requires_media(platform_brief: dict[str, Any]) -> bool:
     return any(keyword in fmt for keyword in MEDIA_FORMAT_KEYWORDS)
 
 
-def _build_image_prompt(platform_brief: dict[str, Any]) -> str:
+def _build_image_prompt(platform_brief: dict[str, Any], *, brand: Brand | None = None) -> str:
     """Composes a fal.ai prompt straight from the creative brief's own
     fields — same "no new invented content, just reshape what the brief
-    already decided" spirit as _fallback_copy_for below."""
+    already decided" spirit as _fallback_copy_for below. Also grounds the
+    image in the brand's own color palette (Issue #156) when one is on
+    file — Kavi is the one agent that triggers image generation, so this
+    is the one place brand.colors actually matters. `brand` is optional
+    (defaulting to no color grounding) so this stays callable without a
+    Brand row from contexts that don't have one — e.g. the Content AI
+    workspace's generate_standalone_images, and existing image/video-gen
+    test coverage in test_image_gen.py/test_video_gen.py that predates
+    this brand-wiring and calls generate_media_stub directly."""
     angle = str(platform_brief.get("angle") or "").strip()
     hook = str(platform_brief.get("hook") or "").strip()
     tone = str(platform_brief.get("tone") or "").strip()
     parts = [part for part in (hook, angle, tone) if part]
-    if parts:
-        return "Social media post image. " + "; ".join(parts)
-    return "Social media post image."
+
+    base = "Social media post image. " + "; ".join(parts) if parts else "Social media post image."
+
+    colors = [str(color).strip() for color in ((brand.colors if brand else None) or []) if str(color).strip()]
+    if colors:
+        base += f" Use a color palette matching the brand's own colors: {', '.join(colors)}."
+    return base
 
 
 def _download_image_bytes(url: str) -> tuple[bytes, str]:
@@ -191,7 +213,9 @@ def _download_image_bytes(url: str) -> tuple[bytes, str]:
     return response.content, content_type
 
 
-def _generate_image_media(post_id: str, platform: str, platform_brief: dict[str, Any]) -> dict[str, Any]:
+def _generate_image_media(
+    post_id: str, platform: str, platform_brief: dict[str, Any], *, brand: Brand | None = None
+) -> dict[str, Any]:
     """The real (Issue #22) image branch of the media hook: calls
     ImageProvider exclusively through its interface
     (packages.integrations.registry.get_image_provider()) — never fal.ai's
@@ -204,7 +228,7 @@ def _generate_image_media(post_id: str, platform: str, platform_brief: dict[str,
     same degrade-on-failure contract as _generate_copy above."""
     fmt = platform_brief.get("format")
     try:
-        prompt = _build_image_prompt(platform_brief)
+        prompt = _build_image_prompt(platform_brief, brand=brand)
         result = get_image_provider().generate(prompt=prompt)
         content, content_type = _download_image_bytes(result.url)
 
@@ -313,14 +337,25 @@ def _generate_video_media(post_id: str, platform: str, platform_brief: dict[str,
     return {"status": "generated", "platform": platform, "format": fmt, "url": stored_url}
 
 
-def generate_media_stub(post_id: str, platform: str, platform_brief: dict[str, Any]) -> dict[str, Any]:
+def generate_media_stub(
+    post_id: str, platform: str, platform_brief: dict[str, Any], *, brand: Brand | None = None
+) -> dict[str, Any]:
     """Image/video-generation hook, called whenever a platform's brief
     calls for image/video/carousel. `image` formats go through the real
-    fal.ai-backed adapter (#22, _generate_image_media above); `video`/
-    `carousel` formats go through the real Runway-backed adapter (#23,
-    _generate_video_media above). Both branches are interface-only and
-    degrade gracefully — see each function's own docstring — so a broken/
-    unconfigured provider never crashes the whole pipeline run."""
+    fal.ai-backed adapter (#22, _generate_image_media above) — grounded in
+    the brand's own color palette (Issue #156) when a brand is given;
+    `video`/`carousel` formats go through the real Runway-backed adapter
+    (#23, _generate_video_media above). Both branches are interface-only
+    and degrade gracefully — see each function's own docstring — so a
+    broken/unconfigured provider never crashes the whole pipeline run.
+
+    `brand` is keyword-only with a None default (rather than matching
+    _generate_image_media's positional order) so existing callers/tests
+    that assert on this function's positional args (post_id, platform,
+    platform_brief) by index, or call it directly without a Brand row at
+    all (test_image_gen.py/test_video_gen.py), are unaffected by this
+    parameter's addition — only the real pipeline path
+    (_generation_output, below) always has and passes a real brand."""
     fmt = str(platform_brief.get("format") or "")
     logger.info(
         "Generation Engine: media hook called for post=%s platform=%s format=%r",
@@ -331,7 +366,7 @@ def generate_media_stub(post_id: str, platform: str, platform_brief: dict[str, A
 
     fmt_lower = fmt.lower()
     if "image" in fmt_lower:
-        return _generate_image_media(post_id, platform, platform_brief)
+        return _generate_image_media(post_id, platform, platform_brief, brand=brand)
     if _is_video_or_carousel_format(fmt_lower):
         return _generate_video_media(post_id, platform, platform_brief)
 
@@ -424,19 +459,29 @@ _DEFAULT_FORMAT_RULE = (
 )
 
 
-def _build_prompt(platform_briefs: dict[str, dict[str, str]], platforms: list[str]) -> str:
+def _build_prompt(
+    platform_briefs: dict[str, dict[str, str]], platforms: list[str], brand: Brand
+) -> str:
     briefs_json = json.dumps({platform: platform_briefs.get(platform, {}) for platform in platforms})
     banned = ", ".join(f'"{phrase}"' for phrase in _BANNED_PHRASES)
     format_rules = "\n".join(
         f"- {platform}: {_PLATFORM_FORMAT_RULES.get(platform, _DEFAULT_FORMAT_RULE)}"
         for platform in platforms
     )
+    industry = brand.industry or brand.name
+    tone_descriptors = brand.tone_descriptors or []
+    target_audience = brand.target_audience or "not specified"
     return f"""You are Kavi, a senior social media copywriter turning an
 already-approved creative brief into the final, publish-ready post copy —
 the actual words that will be posted, not more strategy. You write the
 way a genuinely good social media manager writes: specific, confident,
 a little opinionated, never generic. Respond with strict JSON only — no
 markdown, no commentary, no code fences.
+
+## Brand
+{brand.name} ({industry})
+Tone descriptors: {json.dumps(tone_descriptors)}
+Target audience: {target_audience}
 
 ## Creative briefs per platform
 {briefs_json}
@@ -538,7 +583,7 @@ def regenerate_copy_with_feedback(
 
 
 def _generate_copy(
-    platform_briefs: dict[str, dict[str, str]], platforms: list[str]
+    platform_briefs: dict[str, dict[str, str]], platforms: list[str], brand: Brand
 ) -> tuple[dict[str, str], str, int]:
     """Calls LLMProvider exclusively through its interface (never a direct
     vendor SDK import) — same degrade-on-failure contract as
@@ -547,7 +592,7 @@ def _generate_copy(
     never take the pipeline down with it, just fall back to simple copy
     composed from the creative brief."""
     model = _default_model()
-    prompt = _build_prompt(platform_briefs, platforms)
+    prompt = _build_prompt(platform_briefs, platforms, brand)
     try:
         response = get_llm_provider().complete(prompt=prompt, model=model, temperature=0.7)
         copy_by_platform = _parse_platform_copy(response.text, platforms)
@@ -571,11 +616,13 @@ def _platforms_for(creative_brief: dict[str, Any]) -> tuple[list[str], dict[str,
     return list(platform_briefs.keys()), platform_briefs
 
 
-def _generation_output(db: Session, post: Post, creative_brief: dict[str, Any]) -> dict[str, Any]:
+def _generation_output(
+    db: Session, post: Post, creative_brief: dict[str, Any], brand: Brand
+) -> dict[str, Any]:
     platforms, platform_briefs = _platforms_for(creative_brief)
 
     start = time.perf_counter()
-    copy_by_platform, model, tokens = _generate_copy(platform_briefs, platforms)
+    copy_by_platform, model, tokens = _generate_copy(platform_briefs, platforms, brand)
     latency_ms = (time.perf_counter() - start) * 1000
 
     platform_results: dict[str, Any] = {}
@@ -583,7 +630,7 @@ def _generation_output(db: Session, post: Post, creative_brief: dict[str, Any]) 
         platform_brief = platform_briefs.get(platform, {})
         media_result = None
         if _requires_media(platform_brief):
-            media_result = generate_media_stub(str(post.id), platform, platform_brief)
+            media_result = generate_media_stub(str(post.id), platform, platform_brief, brand=brand)
         platform_results[platform] = {
             "body_text": copy_by_platform[platform],
             "media": media_result,
@@ -675,7 +722,7 @@ def _clone_post_for_variant(db: Session, post: Post) -> Post:
 
 
 def _generate_batch_output(
-    db: Session, post: Post, creative_brief: dict[str, Any], variant_count: int
+    db: Session, post: Post, creative_brief: dict[str, Any], variant_count: int, brand: Brand
 ) -> dict[str, Any]:
     """Batch mode's entry point (Issue #106): runs _generation_output's
     exact same single-variant copy+media generation pass once per variant
@@ -701,7 +748,7 @@ def _generate_batch_output(
     for index, variant_post in enumerate(variant_posts, start=1):
         variant_post.variant_group_id = variant_group_id
         variant_post.variant_index = index
-        variants.append(_generation_output(db, variant_post, creative_brief))
+        variants.append(_generation_output(db, variant_post, creative_brief, brand))
 
     return {
         "post_id": str(post.id),
@@ -742,6 +789,15 @@ def build_generation_node(db: Session | None):
                 f"Generation Engine: no Post found for post_id={state['post_id']!r}"
             )
 
+        # Issue #156: Kavi previously read nothing off Brand directly, only
+        # ever seeing Keshav's per-platform brief — the one pipeline agent
+        # with zero direct brand grounding (Ved/Keshav/Neer all resolve
+        # Brand this same way already). Same missing-row handling as
+        # reviewer_engine.py's _reviewer_output.
+        brand = db.get(Brand, post.brand_id)
+        if brand is None:
+            raise GenerationEngineError(f"Generation Engine: no Brand found for post {post.id}")
+
         creative_brief = state.get("creative_brief") or {}
         generation_options = state.get("generation_options") or {}
 
@@ -754,9 +810,9 @@ def build_generation_node(db: Session | None):
         # identically.
         if generation_options.get("batch"):
             variant_count = _resolve_variant_count(generation_options)
-            output = _generate_batch_output(db, post, creative_brief, variant_count)
+            output = _generate_batch_output(db, post, creative_brief, variant_count, brand)
         else:
-            output = _generation_output(db, post, creative_brief)
+            output = _generation_output(db, post, creative_brief, brand)
 
         return {
             "completed_stages": [*state.get("completed_stages", []), "generation"],
