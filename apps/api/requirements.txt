@@ -38,6 +38,12 @@ openai==1.109.1
 # onboarding voice answers (Issue #144) — no API key, no per-call cost.
 faster-whisper==1.1.1
 
+# Real website scraping for Aarav's onboarding "confirm your website" step
+# (Issue #152) — HTML parsing (bs4) and logo dominant-color extraction
+# (Pillow). No third-party scraping API/key needed.
+beautifulsoup4==4.12.3
+Pillow==11.1.0
+
 pytest==8.3.4
 pytest-cov==6.0.0
 httpx==0.28.1

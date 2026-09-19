@@ -238,6 +238,73 @@ def test_research_stream_emits_log_and_done_events(db_session) -> None:
 
 
 @uses_test_session
+def test_research_stream_emits_extracted_event_when_brand_has_a_website(db_session) -> None:
+    """Issue #152 — the real scrape phase only runs (and only emits
+    "extracted") when the brand has a website on file; the search-only
+    preview above (test_research_stream_emits_log_and_done_events, no
+    website set) must keep working unchanged."""
+    brand, user = _setup_brand(db_session)
+    brand.product_catalog = {"website": "https://acme.test"}
+    db_session.flush()
+    headers = _auth_headers(user)
+
+    from apps.api.models import OnboardingResearch
+    from packages.integrations.search.base import SearchResult
+
+    def fake_run_website_scrape(db, brand_arg, url):
+        assert url == "https://acme.test"
+        research = OnboardingResearch(
+            brand_id=brand_arg.id,
+            website_summary="Acme Widgets makes durable widgets.",
+            website_logo_url="https://storage.test/scraped-logo.png",
+            website_colors=["#1b4dff"],
+        )
+        db.add(research)
+        db.flush()
+        return research
+
+    with (
+        patch("apps.api.routers.onboarding.search_brand_overview", return_value=[SearchResult(title="x", url="https://acme.test", content="...")]),
+        patch("apps.api.routers.onboarding.run_website_scrape", side_effect=fake_run_website_scrape) as mock_scrape,
+    ):
+        response = client.get(f"/brands/{brand.id}/onboarding/research-stream", headers=headers)
+
+    assert response.status_code == 200
+    mock_scrape.assert_called_once()
+    body = response.text
+    assert "event: extracted" in body
+    assert "scraped-logo.png" in body
+    assert '"colors": ["#1b4dff"]' in body
+    assert "event: done" in body
+
+
+@uses_test_session
+def test_research_stream_skips_extraction_event_when_scrape_finds_nothing(db_session) -> None:
+    brand, user = _setup_brand(db_session)
+    brand.product_catalog = {"website": "https://acme.test"}
+    db_session.flush()
+    headers = _auth_headers(user)
+
+    from apps.api.models import OnboardingResearch
+
+    def fake_run_website_scrape(db, brand_arg, url):
+        research = OnboardingResearch(brand_id=brand_arg.id)
+        db.add(research)
+        db.flush()
+        return research
+
+    with (
+        patch("apps.api.routers.onboarding.search_brand_overview", return_value=[]),
+        patch("apps.api.routers.onboarding.run_website_scrape", side_effect=fake_run_website_scrape),
+    ):
+        response = client.get(f"/brands/{brand.id}/onboarding/research-stream", headers=headers)
+
+    assert response.status_code == 200
+    assert "event: extracted" not in response.text
+    assert "event: done" in response.text
+
+
+@uses_test_session
 def test_research_stream_requires_org_membership(db_session) -> None:
     brand, _owner = _setup_brand(db_session, UserRole.EDITOR, suffix="-1")
     _brand2, other_user = _setup_brand(db_session, UserRole.EDITOR, suffix="-2")

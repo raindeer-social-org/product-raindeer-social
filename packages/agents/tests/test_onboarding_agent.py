@@ -136,3 +136,19 @@ def test_graph_handles_missing_research(db_session) -> None:
         report = run_onboarding_agent(db_session, brand, response, research=None)
 
     assert report == VALID_REPORT
+
+
+def test_graph_prompt_includes_real_website_scrape_summary(db_session) -> None:
+    """Issue #152 — the synthesis prompt should ground
+    product_catalog_summary in what the brand's own site says about
+    itself, not just the questionnaire's product_catalog field."""
+    brand, response, research = _setup(db_session)
+    research.website_summary = "Acme Widgets sells hand-finished widgets exclusively to professional makers."
+    db_session.flush()
+
+    with patch("packages.agents.onboarding.graph.get_llm_provider") as mock_get_llm:
+        mock_get_llm.return_value.complete.return_value = _mock_llm(json.dumps(VALID_REPORT))
+        run_onboarding_agent(db_session, brand, response, research)
+
+    prompt = mock_get_llm.return_value.complete.call_args.kwargs["prompt"]
+    assert "hand-finished widgets exclusively to professional makers" in prompt

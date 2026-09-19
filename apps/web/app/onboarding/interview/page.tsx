@@ -13,6 +13,7 @@ import {
   uploadBrandLogo,
   uploadOnboardingAsset,
   upsertOnboarding,
+  type ExtractedBrandKit,
   type OnboardingAsset,
   type ResearchStreamEvent,
 } from "@/lib/api";
@@ -193,6 +194,14 @@ export default function OnboardingInterviewPage() {
   const [scrapeDone, setScrapeDone] = useState(false);
   const scrapeAbortRef = useRef<AbortController | null>(null);
 
+  // Real website scrape (Issue #152) — the log above stays a plain search
+  // preview; this is the actual "we fetched your site and found a logo,
+  // colors, and a summary" suggestion, offered as one-click-accept rather
+  // than applied automatically (a brand may prefer its own manual picks).
+  const [extractedKit, setExtractedKit] = useState<ExtractedBrandKit | null>(null);
+  const [isApplyingKit, setIsApplyingKit] = useState(false);
+  const [appliedKit, setAppliedKit] = useState(false);
+
   // Real mic recording (Issue #144) — MediaRecorder captures audio
   // client-side; the recorded blob is uploaded to the backend, which
   // transcribes it via the free, open-source, self-hosted Whisper
@@ -276,6 +285,8 @@ export default function OnboardingInterviewPage() {
     setScrapeLog([]);
     setScrapeDone(false);
     setIsScraping(true);
+    setExtractedKit(null);
+    setAppliedKit(false);
 
     function handleEvent(event: ResearchStreamEvent) {
       if (event.event === "log" && typeof event.data.text === "string") {
@@ -285,6 +296,12 @@ export default function OnboardingInterviewPage() {
           ...current,
           { text: `Found: ${event.data.title as string}`, tone: "signal" },
         ]);
+      } else if (event.event === "extracted") {
+        setExtractedKit({
+          logoUrl: typeof event.data.logo_url === "string" ? event.data.logo_url : null,
+          colors: Array.isArray(event.data.colors) ? (event.data.colors as string[]) : [],
+          summary: typeof event.data.summary === "string" ? event.data.summary : null,
+        });
       } else if (event.event === "done") {
         setScrapeLog((current) => [
           ...current,
@@ -369,6 +386,28 @@ export default function OnboardingInterviewPage() {
 
   function toggleColor(hex: string) {
     setColors((current) => (current.includes(hex) ? current.filter((c) => c !== hex) : [...current, hex]));
+  }
+
+  // Applies the real website-scrape's logo/colors (Issue #152) as the
+  // brand's own — one click, but never automatic, since a brand may
+  // prefer to pick manually even after a successful scrape.
+  async function useExtractedKit() {
+    if (!extractedKit || !token || !selectedBrandId) return;
+    setIsApplyingKit(true);
+    try {
+      const brand = await updateBrand(token, selectedBrandId, {
+        ...(extractedKit.logoUrl ? { logo_url: extractedKit.logoUrl } : {}),
+        ...(extractedKit.colors.length > 0 ? { colors: extractedKit.colors } : {}),
+      });
+      await refreshBrands();
+      if (brand.colors) setColors(brand.colors);
+      setAppliedKit(true);
+      pushToast("Applied the logo and colors from your website.", "success");
+    } catch (err) {
+      pushToast(err instanceof ApiError ? err.message : "Failed to apply the extracted brand kit", "error");
+    } finally {
+      setIsApplyingKit(false);
+    }
   }
 
   const currentQuestion = QUESTIONS[stepIndex];
@@ -723,6 +762,50 @@ export default function OnboardingInterviewPage() {
                       ))
                     )}
                   </div>
+
+                  {extractedKit && (extractedKit.logoUrl || extractedKit.colors.length > 0) ? (
+                    <div className="mt-4 rounded-[13px] border border-brand-100 bg-brand-50 p-4">
+                      <div className="mb-2.5 flex items-center gap-3">
+                        {extractedKit.logoUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={extractedKit.logoUrl}
+                            alt="Logo found on your website"
+                            className="h-10 w-10 shrink-0 rounded-lg border border-black/5 object-contain bg-white"
+                          />
+                        ) : null}
+                        {extractedKit.colors.length > 0 ? (
+                          <div className="flex gap-1.5">
+                            {extractedKit.colors.map((hex) => (
+                              <span
+                                key={hex}
+                                title={hex}
+                                className="h-6 w-6 rounded-md border border-black/5"
+                                style={{ backgroundColor: hex }}
+                              />
+                            ))}
+                          </div>
+                        ) : null}
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-ink-950">
+                            Found a logo and colors on your site
+                          </p>
+                          {extractedKit.summary ? (
+                            <p className="mt-0.5 line-clamp-2 text-[11.5px] text-ink-400">{extractedKit.summary}</p>
+                          ) : null}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={useExtractedKit}
+                        isLoading={isApplyingKit}
+                        disabled={appliedKit}
+                      >
+                        {appliedKit ? "Applied" : "Use this logo & colors"}
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 

@@ -106,6 +106,7 @@ def run_onboarding_agent(
         research={
             "brand_overview": research.brand_overview if research else [],
             "competitor_positioning": research.competitor_positioning if research else {},
+            "website_summary": research.website_summary if research else None,
         },
     )
 
