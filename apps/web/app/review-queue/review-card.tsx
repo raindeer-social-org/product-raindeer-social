@@ -400,7 +400,7 @@ export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule, on
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-4">
+      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line-faint bg-canvas px-5 py-4">
         {hasActionableFeedback(aiReview) && (
           <Button
             type="button"
@@ -412,7 +412,6 @@ export function ReviewCard({ post, onApprove, onReject, onEdit, onReschedule, on
             Regenerate with Neer&apos;s feedback
           </Button>
         )}
-      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line-faint bg-canvas px-5 py-4">
         {!isEditing && (
           <Button
             type="button"
