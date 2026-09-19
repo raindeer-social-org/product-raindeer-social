@@ -573,7 +573,15 @@ export async function fetchLatestArenaRun(token: string, brandId: string): Promi
 // --- Social accounts (Issue #91) ---
 
 // Mirrors apps/api/models/social_account.py::SocialPlatform.
-export type SocialPlatform = "linkedin" | "x" | "instagram" | "threads" | "facebook";
+export type SocialPlatform =
+  | "linkedin"
+  | "x"
+  | "instagram"
+  | "threads"
+  | "facebook"
+  | "youtube"
+  | "tiktok"
+  | "pinterest";
 
 // Mirrors apps/api/models/social_account.py::SocialAccountStatus.
 export type SocialAccountStatus = "active" | "expired" | "revoked";
@@ -622,7 +630,19 @@ export async function fetchSocialAccounts(token: string, brandId: string): Promi
 // separates "give me a URL" (POST .../linkedin/connect) from the redirect
 // the browser does with it.
 export async function connectLinkedIn(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
-  const res = await fetch(socialAccountsUrl(brandId, "/linkedin/connect"), {
+  return connectPlatform(token, brandId, "linkedin");
+}
+
+// Same "give me a URL, don't navigate yourself" shape as connectLinkedIn
+// above, generalized by platform (Issue #138) since every platform's
+// /connect endpoint (apps/api/routers/social_accounts.py) is wired
+// identically — one function instead of one per platform.
+export async function connectPlatform(
+  token: string,
+  brandId: string,
+  platform: SocialPlatform
+): Promise<AuthorizeUrlResponse> {
+  const res = await fetch(socialAccountsUrl(brandId, `/${platform}/connect`), {
     method: "POST",
     headers: authHeaders(token),
   });
@@ -632,65 +652,36 @@ export async function connectLinkedIn(token: string, brandId: string): Promise<A
   }
 
   return res.json();
+}
+
+export async function connectInstagram(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  return connectPlatform(token, brandId, "instagram");
+}
+
+export async function connectThreads(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  return connectPlatform(token, brandId, "threads");
+}
+
+export async function connectFacebook(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  return connectPlatform(token, brandId, "facebook");
+}
+
+export async function connectYouTube(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  return connectPlatform(token, brandId, "youtube");
+}
+
+export async function connectTikTok(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  return connectPlatform(token, brandId, "tiktok");
+}
+
+export async function connectPinterest(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
+  return connectPlatform(token, brandId, "pinterest");
 }
 
 // Same shape as connectLinkedIn — starts X's OAuth flow via
 // apps/api/routers/social_accounts.py::connect_x.
 export async function connectX(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
-  const res = await fetch(socialAccountsUrl(brandId, "/x/connect"), {
-    method: "POST",
-    headers: authHeaders(token),
-  });
-
-  if (!res.ok) {
-    throw new ApiError(await parseErrorDetail(res), res.status);
-  }
-
-  return res.json();
-}
-
-// Starts the Instagram/Threads/Facebook OAuth flows — same shape as
-// connectLinkedIn above (see apps/api/routers/social_accounts.py's
-// connect_instagram/connect_threads/connect_facebook, which are all thin
-// wrappers around the same _connect_platform helper connect_linkedin's
-// logic was generalized into).
-export async function connectInstagram(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
-  const res = await fetch(socialAccountsUrl(brandId, "/instagram/connect"), {
-    method: "POST",
-    headers: authHeaders(token),
-  });
-
-  if (!res.ok) {
-    throw new ApiError(await parseErrorDetail(res), res.status);
-  }
-
-  return res.json();
-}
-
-export async function connectThreads(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
-  const res = await fetch(socialAccountsUrl(brandId, "/threads/connect"), {
-    method: "POST",
-    headers: authHeaders(token),
-  });
-
-  if (!res.ok) {
-    throw new ApiError(await parseErrorDetail(res), res.status);
-  }
-
-  return res.json();
-}
-
-export async function connectFacebook(token: string, brandId: string): Promise<AuthorizeUrlResponse> {
-  const res = await fetch(socialAccountsUrl(brandId, "/facebook/connect"), {
-    method: "POST",
-    headers: authHeaders(token),
-  });
-
-  if (!res.ok) {
-    throw new ApiError(await parseErrorDetail(res), res.status);
-  }
-
-  return res.json();
+  return connectPlatform(token, brandId, "x");
 }
 
 export async function disconnectSocialAccount(

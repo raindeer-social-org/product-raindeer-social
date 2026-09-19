@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     # XProvider uses today.
     x_api_key: str | None = None
 
+    # Shared across Meta's 3 platforms (Instagram, Threads, Facebook) —
+    # one Meta Developer App covers all of them.
+    meta_app_id: str | None = None
+    meta_app_secret: str | None = None
     # Instagram, Threads, and Facebook Page publishing are all Meta Graph
     # API products registered under one Meta developer app — unlike
     # LinkedIn/X, they share a single client id/secret pair rather than
@@ -46,6 +50,18 @@ class Settings(BaseSettings):
     instagram_redirect_uri: str | None = None
     threads_redirect_uri: str | None = None
     facebook_redirect_uri: str | None = None
+
+    youtube_client_id: str | None = None
+    youtube_client_secret: str | None = None
+    youtube_redirect_uri: str | None = None
+
+    tiktok_client_key: str | None = None
+    tiktok_client_secret: str | None = None
+    tiktok_redirect_uri: str | None = None
+
+    pinterest_app_id: str | None = None
+    pinterest_app_secret: str | None = None
+    pinterest_redirect_uri: str | None = None
 
     search_provider: str = "tavily"
     llm_provider: str = "openrouter"

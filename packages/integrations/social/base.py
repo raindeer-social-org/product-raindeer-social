@@ -25,6 +25,11 @@ class SocialOAuthProvider(ABC):
     def exchange_code(
         self, code: str, redirect_uri: str, code_verifier: str | None = None
     ) -> SocialTokens:
+        """`code_verifier` only matters for a platform whose OAuth2 flow
+        requires PKCE (e.g. TikTokProvider) — every other adapter ignores
+        it. Optional with a None default so callers that don't need it
+        (LinkedIn, Instagram, Threads, Facebook, X) aren't forced to pass
+        anything."""
         """`code_verifier` is only meaningful to PKCE-requiring providers
         (currently XProvider, which needs the exact `state` value it put
         in `code_challenge` at `authorize_url()` time) — providers that
