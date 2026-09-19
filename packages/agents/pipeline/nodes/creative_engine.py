@@ -127,34 +127,81 @@ def _parse_platform_briefs(text: str, platforms: list[str]) -> dict[str, dict[st
     return result
 
 
+_BANNED_PHRASES = (
+    "in today's fast-paced world",
+    "in today's digital age",
+    "unlock the power of",
+    "look no further",
+    "game-changer",
+    "game changer",
+    "let's dive in",
+    "dive right in",
+    "unleash",
+    "elevate your",
+    "take it to the next level",
+    "in this day and age",
+    "revolutionize",
+    "the world of",
+    "whether you're a",
+)
+
+
 def _build_prompt(brand: Brand, research_brief: dict[str, Any], platforms: list[str]) -> str:
     industry = brand.industry or brand.name
-    return f"""You are a senior social media creative strategist deciding
-*how* to make a brand's next post land on each platform — not writing the
-copy itself, just the creative strategy behind it. Respond with strict
-JSON only — no markdown, no commentary, no code fences.
+    banned = ", ".join(f'"{phrase}"' for phrase in _BANNED_PHRASES)
+    return f"""You are Keshav, a senior social media creative strategist
+with a sharp eye for what actually stops a scroll versus what reads as
+generic AI-marketing filler. Your job is deciding *how* to make a brand's
+next post land on each platform — not writing the copy itself, just the
+creative strategy behind it. Respond with strict JSON only — no markdown,
+no commentary, no code fences.
 
 ## Brand
 {brand.name} ({industry})
 
-## Research brief
+## Research brief — use these SPECIFIC details, don't generalize past them
 Brand context: {json.dumps(research_brief.get("brand_context"))}
 Platform trends: {json.dumps(research_brief.get("platform_trends"))}
 Industry trends: {json.dumps(research_brief.get("industry_trends"))}
+Audience signals (real questions/complaints from this audience right now): {json.dumps(research_brief.get("audience_signals"))}
 Timing signal: {json.dumps(research_brief.get("timing_signal"))}
+
+## What makes a brief weak (avoid this)
+A brief is weak when its hook or angle could be copy-pasted onto any
+other brand in any other industry without anyone noticing. If the brand
+context or trends above contain a real name, number, product detail, or
+specific event, the hook or angle MUST reference it directly — that
+specificity is the whole point of doing research first. Never fall back
+to vague category-level marketing-speak ("quality you can trust",
+"customers love us") when a concrete detail from the brief is available.
+Never let a hook, angle, or CTA use or paraphrase any of these tired
+openers/phrases: {banned}.
 
 ## Task
 For EACH of these target platforms — {", ".join(platforms)} — produce a
-distinct creative brief, genuinely adapted to that platform's norms,
-audience expectations, and format conventions. Do not reuse the same
-angle, hook, CTA, or tone across platforms — each platform's brief must
-reflect how that platform is actually used.
+distinct creative brief, genuinely adapted to that platform's real norms:
+
+- linkedin: a professional but not corporate-stiff angle — thought
+  leadership, a specific lesson learned, or a data point worth debating.
+  Hooks should earn a read from a scrolling feed, not open with a title.
+- x: short, punchy, opinionated. The hook has to work as a standalone
+  one-liner — assume most readers never click through.
+- instagram: visual-first thinking — the angle should justify what's ON
+  SCREEN, not just what's said. Hook is the first line of caption before
+  "more" truncates it.
+- default/other platforms: infer sensible norms from how that platform is
+  actually used and stay consistent with them.
+
+Do not reuse the same angle, hook, CTA, or tone across platforms — each
+platform's brief must reflect how that platform is actually used, and
+each hook must be something a real person would stop scrolling for.
 
 Respond with a single JSON object whose keys are exactly the platform
 names listed above, and whose values are objects with these string keys:
 - "format": the post format (e.g. text_post, short_thread, image, carousel)
-- "angle": the creative angle/strategy for this post
-- "hook": the opening line/hook to grab attention
+- "angle": the creative angle/strategy for this post — specific, not generic
+- "hook": the exact opening line to grab attention — concrete, never a
+  category-level cliché
 - "cta": the call to action
 - "tone": the tone of voice for this platform
 
@@ -216,6 +263,149 @@ def _creative_brief(db: Session, post: Post, research_brief: dict[str, Any]) -> 
         "post_id": str(post.id),
         "platforms": platform_briefs,
     }
+
+
+ANGLE_COUNT = 6
+REQUIRED_ANGLE_KEYS = ("format", "angle", "hook", "why", "cta", "score")
+
+# Used only when the LLM call/parse fails (see _generate_angles below) —
+# six fixed, still-differentiated angle templates so a degraded "Generate
+# all 6" call still hands the Creative page six distinct cards instead of
+# an error or duplicates.
+_FALLBACK_ANGLES: list[dict[str, Any]] = [
+    {
+        "format": "Text post",
+        "angle": "Thought leadership",
+        "hook": "Open with a counterintuitive insight from the brief.",
+        "why": "Positions the brand as the one that noticed first.",
+        "cta": "Invite readers to share their own take.",
+        "score": 82,
+    },
+    {
+        "format": "Carousel",
+        "angle": "Before / after",
+        "hook": "Lead with the number that changed.",
+        "why": "Concrete before/after numbers outperform generic claims.",
+        "cta": "Prompt a save or share.",
+        "score": 80,
+    },
+    {
+        "format": "Short thread",
+        "angle": "Timely reaction",
+        "hook": "React to the trend named in the brief with a punchy take.",
+        "why": "Rides an existing conversation instead of starting a cold one.",
+        "cta": "Ask a quick, reply-provoking question.",
+        "score": 78,
+    },
+    {
+        "format": "Single image",
+        "angle": "Customer story",
+        "hook": "Open with a real customer's moment of friction.",
+        "why": "Specific stories read as credible, not promotional.",
+        "cta": "Invite readers to learn more.",
+        "score": 77,
+    },
+    {
+        "format": "Video",
+        "angle": "Behind the scenes",
+        "hook": "Show the work, not just the result.",
+        "why": "Process content builds trust competitors' polished posts don't.",
+        "cta": "Encourage comments with questions.",
+        "score": 75,
+    },
+    {
+        "format": "Text post",
+        "angle": "Contrarian take",
+        "hook": "Challenge a common assumption in the industry.",
+        "why": "Disagreement drives more comments than agreement.",
+        "cta": "Ask readers if they agree.",
+        "score": 73,
+    },
+]
+
+
+class CreativeAnglesError(Exception):
+    """Raised when angle generation is asked to run for a Brand that
+    can't be resolved — a programming/data error, not a transient
+    LLM-provider failure, so unlike LLM failures this is not swallowed."""
+
+
+def _fallback_angles(count: int) -> list[dict[str, Any]]:
+    return [dict(angle) for angle in _FALLBACK_ANGLES[:count]]
+
+
+def _build_angles_prompt(brand: Brand, brief_text: str, count: int) -> str:
+    industry = brand.industry or brand.name
+    return f"""You are a senior social media creative strategist. A brand
+has given you a free-form creative brief. Produce {count} genuinely
+distinct content angles for it — different formats, different hooks,
+different strategies — so the brand's team can pick whichever lands best.
+Respond with strict JSON only — no markdown, no commentary, no code fences.
+
+## Brand
+{brand.name} ({industry})
+
+## Creative brief
+{brief_text}
+
+## Task
+Produce a JSON array of exactly {count} objects. Each object must have
+these string keys:
+- "format": the post format (e.g. text post, carousel, short thread, video)
+- "angle": the creative angle/strategy in a few words
+- "hook": the opening line/hook to grab attention
+- "why": one sentence on why this angle should work for this brief
+- "cta": the call to action
+- "score": an integer 0-100 estimating how strong this angle is
+
+No two objects may share the same format+angle combination. Respond with
+ONLY the JSON array. No markdown code fences, no extra text.
+"""
+
+
+def _parse_angles(text: str, count: int) -> list[dict[str, Any]]:
+    parsed = json.loads(_strip_code_fence(text))
+    if not isinstance(parsed, list) or not parsed:
+        raise ValueError("Creative Engine angle output was valid JSON but not a non-empty array")
+
+    result: list[dict[str, Any]] = []
+    for entry in parsed[:count]:
+        if not isinstance(entry, dict):
+            raise ValueError("Creative Engine angle output contained a non-object entry")
+        missing = [key for key in REQUIRED_ANGLE_KEYS if key not in entry]
+        if missing:
+            raise ValueError(f"Creative Engine angle output missing keys: {missing}")
+        result.append(
+            {
+                "format": str(entry["format"]),
+                "angle": str(entry["angle"]),
+                "hook": str(entry["hook"]),
+                "why": str(entry["why"]),
+                "cta": str(entry["cta"]),
+                "score": int(entry["score"]),
+            }
+        )
+    return result
+
+
+def generate_creative_angles(
+    brand: Brand, brief_text: str, count: int = ANGLE_COUNT
+) -> list[dict[str, Any]]:
+    """Issue #126 — the Creative workspace page's "Generate all 6" action.
+    Turns a free-form creative brief straight into `count` distinct angle
+    cards, reusing this module's exact LLMProvider-only, degrade-on-
+    failure contract (see module docstring / _generate_platform_briefs
+    above) rather than a second, client-side implementation. Unlike
+    _creative_brief above, this doesn't require a Post or an upstream
+    research_brief — the Creative page's brief textarea is the only input.
+    """
+    prompt = _build_angles_prompt(brand, brief_text, count)
+    try:
+        response = get_llm_provider().complete(prompt=prompt, model=_default_model(), temperature=0.8)
+        return _parse_angles(response.text, count)
+    except Exception:
+        logger.warning("Creative Engine angle generation failed; using fallback angles", exc_info=True)
+        return _fallback_angles(count)
 
 
 def build_creative_node(db: Session | None):

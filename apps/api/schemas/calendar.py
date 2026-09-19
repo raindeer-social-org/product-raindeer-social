@@ -3,7 +3,10 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from apps.api.models.agent_run import AgentType
 from apps.api.models.content_calendar_event import SUPPORTED_PLATFORMS, CalendarEventStatus
+from apps.api.models.post import PipelineStage
+from apps.api.schemas.review import ReviewFeedbackRead
 
 
 def _validate_platforms(platforms: list[str]) -> list[str]:
@@ -61,3 +64,43 @@ class CalendarEventRead(BaseModel):
     status: CalendarEventStatus
     created_at: datetime
     updated_at: datetime
+
+
+class CalendarEventAgentRunRead(BaseModel):
+    """One AgentRun row (apps/api/models/agent_run.py) for the Post behind
+    a calendar event — real pipeline execution history, not anything
+    synthesized for display. Powers the calendar event preview modal's
+    "agent trail" timeline (Issue #125)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    agent_type: AgentType
+    output: dict | None
+    model: str | None
+    tokens: int | None
+    cost: float | None
+    latency_ms: float | None
+    created_at: datetime
+
+
+class CalendarEventPostRead(BaseModel):
+    """The Post the pipeline trigger (Issue #29) has generated for a
+    calendar event, plus its review history and agent run trail — every-
+    thing the calendar's post preview modal needs in one round trip
+    (Issue #125). GET .../post returns null (200, not 404) when no Post
+    exists yet: a SCHEDULED event the trigger hasn't claimed is a normal,
+    common state, not an error."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    brand_id: uuid.UUID
+    calendar_event_id: uuid.UUID | None
+    current_pipeline_stage: PipelineStage
+    body_text: dict | None
+    media: list | None
+    created_at: datetime
+    updated_at: datetime
+    review_feedback: list[ReviewFeedbackRead]
+    agent_runs: list[CalendarEventAgentRunRead]

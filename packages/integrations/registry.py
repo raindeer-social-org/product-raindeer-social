@@ -9,8 +9,13 @@ from packages.integrations.llm.openrouter_provider import OpenRouterProvider
 from packages.integrations.search.base import SearchProvider
 from packages.integrations.search.tavily import TavilyProvider
 from packages.integrations.social.base import SocialOAuthProvider, SocialPublisher
+from packages.integrations.social.facebook_provider import FacebookProvider
+from packages.integrations.social.instagram_provider import InstagramProvider
 from packages.integrations.social.linkedin_provider import LinkedInProvider
+from packages.integrations.social.threads_provider import ThreadsProvider
 from packages.integrations.social.x_provider import XProvider
+from packages.integrations.speech.base import SpeechToTextProvider
+from packages.integrations.speech.whisper_provider import WhisperSpeechProvider
 from packages.integrations.storage.base import StorageProvider
 from packages.integrations.storage.supabase_provider import SupabaseStorageProvider
 from packages.integrations.video_gen.base import VideoProvider
@@ -40,6 +45,22 @@ _SOCIAL_OAUTH_PROVIDERS = {
         client_id=settings.x_client_id or "",
         client_secret=settings.x_client_secret or "",
     ),
+    # Instagram, Threads, and Facebook are all Meta Graph API products
+    # registered under one Meta developer app, so they share
+    # META_APP_ID/META_APP_SECRET rather than each getting its own
+    # client_id/secret pair the way LinkedIn/X do.
+    "instagram": lambda settings: InstagramProvider(
+        client_id=settings.meta_app_id or "",
+        client_secret=settings.meta_app_secret or "",
+    ),
+    "threads": lambda settings: ThreadsProvider(
+        client_id=settings.meta_app_id or "",
+        client_secret=settings.meta_app_secret or "",
+    ),
+    "facebook": lambda settings: FacebookProvider(
+        client_id=settings.meta_app_id or "",
+        client_secret=settings.meta_app_secret or "",
+    ),
 }
 
 # Every publisher is currently the same adapter instance that also
@@ -55,6 +76,18 @@ _SOCIAL_PUBLISHERS = {
     "x": lambda settings: XProvider(
         client_id=settings.x_client_id or "",
         client_secret=settings.x_client_secret or "",
+    ),
+    "instagram": lambda settings: InstagramProvider(
+        client_id=settings.meta_app_id or "",
+        client_secret=settings.meta_app_secret or "",
+    ),
+    "threads": lambda settings: ThreadsProvider(
+        client_id=settings.meta_app_id or "",
+        client_secret=settings.meta_app_secret or "",
+    ),
+    "facebook": lambda settings: FacebookProvider(
+        client_id=settings.meta_app_id or "",
+        client_secret=settings.meta_app_secret or "",
     ),
 }
 
@@ -72,6 +105,10 @@ _IMAGE_PROVIDERS = {
 
 _VIDEO_PROVIDERS = {
     "runway": lambda settings: RunwayProvider(api_key=settings.runway_api_key or ""),
+}
+
+_SPEECH_PROVIDERS = {
+    "whisper": lambda settings: WhisperSpeechProvider(model_size=settings.whisper_model_size),
 }
 
 
@@ -174,5 +211,17 @@ def get_video_provider() -> VideoProvider:
         raise ValueError(
             f"Unknown VIDEO_PROVIDER '{settings.video_provider}'. "
             f"Valid options: {sorted(_VIDEO_PROVIDERS)}"
+        ) from None
+    return factory(settings)
+
+
+def get_speech_provider() -> SpeechToTextProvider:
+    settings = get_settings()
+    try:
+        factory = _SPEECH_PROVIDERS[settings.speech_provider]
+    except KeyError:
+        raise ValueError(
+            f"Unknown SPEECH_PROVIDER '{settings.speech_provider}'. "
+            f"Valid options: {sorted(_SPEECH_PROVIDERS)}"
         ) from None
     return factory(settings)

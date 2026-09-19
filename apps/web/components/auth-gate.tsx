@@ -7,18 +7,38 @@ import { useAuth } from "@/lib/auth-context";
 import { Nav } from "@/components/nav";
 
 // Routes reachable without a token. Everything else is gated.
-const PUBLIC_PATHS = ["/login"];
+const PUBLIC_PATHS = ["/login", "/signup"];
+
+// Routes that render full-bleed (no Nav sidebar/chrome) even once
+// authenticated — the Issue #123 signup/onboarding wizard is a dedicated
+// full-screen flow in the design mockup, not a page inside the app shell.
+// Superset of PUBLIC_PATHS: /signup/brand and /onboarding/interview still
+// require a token (the redirect effect below still applies to them), they
+// just don't get the Nav wrapper once one is present.
+const CHROMELESS_PATHS = ["/login", "/signup", "/signup/brand", "/onboarding/interview"];
+
+// Routes that render their own full-height shell instead of the light
+// Nav sidebar + padded <main> every other authenticated route gets. The
+// Content Arena (Issue #124, apps/web/app/arena/page.tsx) is a
+// deliberately separate dark visual world from the rest of the app — see
+// tailwind.config.ts's `arenadark` tokens — so it needs the full viewport
+// to itself, not squeezed into the app shell's max-w-6xl column.
+const FULL_BLEED_PATHS = ["/arena"];
 
 /**
  * Wraps the whole app (mounted from app/layout.tsx). Redirects
  * unauthenticated visitors to /login on every protected route, and renders
- * the shell nav once a session is present.
+ * the shell nav once a session is present (except on the chromeless
+ * signup/onboarding wizard routes and FULL_BLEED_PATHS, which render
+ * directly — still gated by the same redirect logic below).
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const { token, isLoading } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const isPublicPath = PUBLIC_PATHS.includes(pathname);
+  const isChromeless =
+    CHROMELESS_PATHS.includes(pathname) || FULL_BLEED_PATHS.some((path) => pathname.startsWith(path));
 
   useEffect(() => {
     if (isLoading || isPublicPath) return;
@@ -34,7 +54,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center text-sm text-slate-500" role="status">
+      <div className="flex min-h-screen items-center justify-center text-sm text-ink-400" role="status">
         Loading…
       </div>
     );
@@ -45,8 +65,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return null;
   }
 
+  if (isChromeless) {
+    return <>{children}</>;
+  }
+
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex min-h-screen bg-canvas">
       <Nav />
       <main className="min-w-0 flex-1 px-6 py-8 lg:px-10">
         <div className="mx-auto max-w-6xl">{children}</div>

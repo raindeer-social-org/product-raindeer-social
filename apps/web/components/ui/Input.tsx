@@ -3,9 +3,9 @@ import { forwardRef } from "react";
 import { cn } from "./cn";
 
 const FIELD_CLASSES =
-  "block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm " +
-  "placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 " +
-  "disabled:bg-slate-50 disabled:text-slate-400";
+  "block w-full rounded-[11px] border border-line bg-white px-3.5 py-2.5 text-sm text-ink-950 " +
+  "placeholder:text-ink-200 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 " +
+  "disabled:bg-canvas disabled:text-ink-200";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...props }, ref) => (
@@ -47,15 +47,15 @@ export function Field({
 } & Partial<LabelHTMLAttributes<HTMLLabelElement>>) {
   return (
     <div className="space-y-1.5">
-      <label htmlFor={htmlFor} className="block text-sm font-medium text-slate-700">
+      <label htmlFor={htmlFor} className="block text-xs font-semibold text-ink-600">
         {label}
-        {required ? <span className="ml-0.5 text-red-500">*</span> : null}
+        {required ? <span className="ml-0.5 text-danger">*</span> : null}
       </label>
       {children}
       {error ? (
-        <p className="text-sm text-red-600">{error}</p>
+        <p className="text-sm text-danger">{error}</p>
       ) : hint ? (
-        <p className="text-sm text-slate-500">{hint}</p>
+        <p className="text-sm text-ink-400">{hint}</p>
       ) : null}
     </div>
   );

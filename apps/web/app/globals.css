@@ -8,7 +8,7 @@
   }
 
   * {
-    border-color: theme("colors.slate.200");
+    border-color: theme("colors.line.soft");
   }
 
   html,
@@ -17,7 +17,7 @@
   }
 
   body {
-    @apply bg-slate-50 text-slate-900 antialiased;
+    @apply bg-canvas text-ink-950 antialiased;
   }
 
   ::selection {
@@ -37,5 +37,15 @@
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
     @apply bg-slate-300 rounded-full;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
   }
 }

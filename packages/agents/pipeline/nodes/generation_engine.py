@@ -224,6 +224,40 @@ def _generate_image_media(post_id: str, platform: str, platform_brief: dict[str,
     return {"status": "generated", "platform": platform, "format": fmt, "url": stored_url}
 
 
+def generate_standalone_images(
+    prompt: str, count: int = 4, *, path_prefix: str = "adhoc"
+) -> list[dict[str, Any]]:
+    """Issue #126 — the Content AI workspace page's image-first fast path.
+    Generates `count` standalone image variants straight from a free-form
+    prompt, reusing the exact same ImageProvider (Issue #22) +
+    StorageProvider (Issue #11) interface calls _generate_image_media uses
+    for the per-post pipeline — just without a Post/creative-brief
+    context, since Content AI skips copywriting entirely. Same
+    interface-only, degrade-on-failure contract as the rest of this
+    module: a failed variant becomes a {"status": "failed"} entry rather
+    than aborting the whole batch, so one bad call doesn't cost the other
+    variants."""
+    results: list[dict[str, Any]] = []
+    for _ in range(count):
+        try:
+            result = get_image_provider().generate(prompt=prompt)
+            content, content_type = _download_image_bytes(result.url)
+            extension = "png" if "png" in content_type else content_type.split("/")[-1] or "png"
+            path = f"generated/{path_prefix}/{uuid.uuid4().hex}.{extension}"
+            stored_url = get_storage_provider().upload(path, content, content_type)
+        except Exception:
+            logger.warning(
+                "Generation Engine: standalone image generation failed; "
+                "degrading gracefully (variant omitted)",
+                exc_info=True,
+            )
+            results.append({"status": "failed", "url": None})
+            continue
+
+        results.append({"status": "generated", "url": stored_url})
+    return results
+
+
 def _is_video_or_carousel_format(fmt: str) -> bool:
     return any(keyword in fmt for keyword in VIDEO_FORMAT_KEYWORDS)
 
@@ -343,23 +377,90 @@ def _fallback_copy_for(platform_brief: dict[str, Any], platform: str) -> str:
     return f"[Generation Engine fallback] Unable to generate copy for {platform}."
 
 
+# Copy that leans on these reads as AI-generated filler, not something a
+# person on the brand's social team actually wrote — banned outright.
+_BANNED_PHRASES = (
+    "in today's fast-paced world",
+    "in today's digital age",
+    "unlock the power of",
+    "look no further",
+    "game-changer",
+    "game changer",
+    "let's dive in",
+    "dive right in",
+    "unleash",
+    "elevate your",
+    "take it to the next level",
+    "revolutionize",
+    "buckle up",
+    "the world of",
+    "whether you're a",
+    "at the end of the day",
+)
+
+_PLATFORM_FORMAT_RULES = {
+    "linkedin": (
+        "LinkedIn: written like a real professional post, not a press "
+        "release. Short paragraphs (1-3 sentences), line breaks between "
+        "them for scannability. At most 0-3 hashtags at the very end, "
+        "never a wall of hashtags, never hashtags mid-sentence."
+    ),
+    "x": (
+        "X: tight and punchy, under ~280 characters unless the brief "
+        "explicitly calls for a thread. No hashtag walls — 0-1 hashtag "
+        "only if it's genuinely load-bearing. Every word has to earn its "
+        "place."
+    ),
+    "instagram": (
+        "Instagram: caption supports the visual, doesn't duplicate it. "
+        "Hook is the first line — it's the only part visible before "
+        "'more' truncates the rest. Hashtags are fine (5-15), grouped at "
+        "the end, relevant rather than generic (#love #instagood banned)."
+    ),
+}
+_DEFAULT_FORMAT_RULE = (
+    "Match this platform's real norms for length, formatting, and "
+    "hashtag/emoji use as implied by its brief."
+)
+
+
 def _build_prompt(platform_briefs: dict[str, dict[str, str]], platforms: list[str]) -> str:
     briefs_json = json.dumps({platform: platform_briefs.get(platform, {}) for platform in platforms})
-    return f"""You are a senior social media copywriter turning an
+    banned = ", ".join(f'"{phrase}"' for phrase in _BANNED_PHRASES)
+    format_rules = "\n".join(
+        f"- {platform}: {_PLATFORM_FORMAT_RULES.get(platform, _DEFAULT_FORMAT_RULE)}"
+        for platform in platforms
+    )
+    return f"""You are Kavi, a senior social media copywriter turning an
 already-approved creative brief into the final, publish-ready post copy —
-the actual words that will be posted, not more strategy. Respond with
-strict JSON only — no markdown, no commentary, no code fences.
+the actual words that will be posted, not more strategy. You write the
+way a genuinely good social media manager writes: specific, confident,
+a little opinionated, never generic. Respond with strict JSON only — no
+markdown, no commentary, no code fences.
 
 ## Creative briefs per platform
 {briefs_json}
+
+## Absolutely do not use these phrases or their close paraphrases
+{banned}. Also avoid: stacking 3+ emoji in a row, ending every sentence
+with an exclamation point, and asking a rhetorical question just to fill
+space ("Ever wonder why...?") unless the brief's hook actually calls for
+one.
+
+## Platform-native formatting — this is not optional
+{format_rules}
 
 ## Task
 For EACH of these target platforms — {", ".join(platforms)} — write the
 final post copy that follows that platform's brief (format, angle, hook,
 cta, tone) exactly: open with (or clearly incorporate) that platform's
-hook, end with (or clearly incorporate) its CTA, and match its tone. Each
-platform's copy must be genuinely distinct — reflecting that platform's
-own brief — not the same text reused across platforms.
+hook in the very first line — that's the only part of the post many
+readers will ever see — end with (or clearly incorporate) its CTA, and
+match its tone throughout, not just in the opening line. Write it like a
+specific, real post about this specific brand and angle, not a
+fill-in-the-blank template. Each platform's copy must be genuinely
+distinct in wording and structure — reflecting that platform's own brief
+— never the same text lightly reworded across platforms.
 
 Respond with a single JSON object whose keys are exactly the platform
 names listed above, and whose values are the final copy text (a plain
