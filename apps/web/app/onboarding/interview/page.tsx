@@ -20,6 +20,7 @@ import {
   type DynamicQuestion,
   type ExtractedBrandKit,
   type OnboardingAsset,
+  type OnboardingUpsertInput,
   type ResearchStreamEvent,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -32,7 +33,7 @@ import { ChipButton } from "./chip-button";
 import { SocialConnectionsPanel } from "@/app/social-accounts/social-connections-panel";
 import { DynamicQuestionCard } from "./dynamic-question-card";
 
-type QuestionType = "scrape" | "colors" | "chips" | "chipsSingle" | "text" | "voice" | "upload";
+type QuestionType = "scrape" | "essentials";
 
 interface Question {
   id: string;
@@ -61,76 +62,25 @@ const GOAL_CHIP_OPTIONS = [
   "Hiring",
 ];
 
-const CADENCE_OPTIONS = ["Daily", "A few times a week", "Weekly", "A few times a month"];
-
 const PRESET_COLORS = ["#1B4DFF", "#0A1633", "#0E7A4E", "#B46A00", "#6B32C9", "#C9295A"];
 
+// Exactly 2 fixed pages before Aarav takes over and designs every
+// subsequent question himself, tailored to what's been answered so far —
+// the asset library (optional photos/style guide) moves to its own stage
+// *after* Aarav's dynamic phase finishes, so it never counts against
+// these two.
 const QUESTIONS: Question[] = [
   {
     id: "scrape",
     type: "scrape",
-    title: "Let's confirm your website",
-    sub: "Aarav reads your public site for real, live signals — this doesn't ask you anything, just watch it work.",
+    title: "Let's confirm your website & brand colors",
+    sub: "Aarav reads your public site for real, live signals, and offers what it finds — pick your own palette and logo below if you'd rather.",
   },
   {
-    id: "colors",
-    type: "colors",
-    title: "What are your brand colors?",
-    sub: "Pick the palette Kavi should design with, and drop your logo if you have one handy.",
-  },
-  {
-    id: "voiceChips",
-    type: "chips",
-    title: "How would you describe your brand's voice?",
-    sub: "Pick as many as fit — Keshav writes copy to match.",
-  },
-  {
-    id: "goals",
-    type: "chips",
-    title: "What are your goals for the next quarter?",
-    sub: "This shapes what Ved researches and what Neer optimizes for.",
-  },
-  {
-    id: "audience",
-    type: "voice",
-    title: "Tell us about your audience, in your own words",
-    sub: "Who are you actually trying to reach?",
-  },
-  {
-    id: "product",
-    type: "text",
-    title: "What do you sell, and who's it for?",
-    sub: "The short version — Aarav will ask about the details later.",
-  },
-  {
-    id: "competitors",
-    type: "text",
-    title: "Who are your top competitors?",
-    sub: "Comma-separated is fine — Ved researches how you compare.",
-  },
-  {
-    id: "mission",
-    type: "text",
-    title: "What's your brand's mission, in one line?",
-    sub: "The thing you'd want on a billboard. Optional, but it sharpens everything Keshav and Kavi write.",
-  },
-  {
-    id: "contentDosDonts",
-    type: "text",
-    title: "Anything your content should never say or show?",
-    sub: "Comma-separated is fine — Neer holds every draft to this list.",
-  },
-  {
-    id: "postingCadence",
-    type: "chipsSingle",
-    title: "How often do you want to post?",
-    sub: "Keshav and Kavi plan around this — you can change it any time.",
-  },
-  {
-    id: "assets",
-    type: "upload",
-    title: "Drop in anything that shows your brand at its best",
-    sub: "Product photos, past posts, a style guide — totally optional.",
+    id: "essentials",
+    type: "essentials",
+    title: "The essentials",
+    sub: "Five quick things — voice, goals, audience, what you sell, and who you're up against. Answer only what you know; from here on, Aarav designs every question himself, tailored to what you've just told him.",
   },
 ];
 
@@ -157,7 +107,7 @@ export default function OnboardingInterviewPage() {
   // entirely when the user has asked for less motion.
   const prefersReducedMotion = useReducedMotion();
 
-  const [stage, setStage] = useState<"questions" | "dynamic" | "capstone" | "connect">("questions");
+  const [stage, setStage] = useState<"questions" | "dynamic" | "assets" | "capstone" | "connect">("questions");
   const [stepIndex, setStepIndex] = useState(0);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -361,9 +311,6 @@ export default function OnboardingInterviewPage() {
     { label: "Audience", done: requiredAnswered.audience },
     { label: "What you offer", done: requiredAnswered.product },
     { label: "Competitors", done: requiredAnswered.competitors },
-    { label: "Mission (optional)", done: mission.trim().length > 0, optional: true },
-    { label: "Content dos/don'ts (optional)", done: contentDosDontsText.trim().length > 0, optional: true },
-    { label: "Posting cadence (optional)", done: postingCadence.length > 0, optional: true },
     { label: "Brand assets (optional)", done: assets.length > 0, optional: true },
   ];
   const trackedCount = memoryItems.filter((item) => !item.optional).length;
@@ -501,40 +448,25 @@ export default function OnboardingInterviewPage() {
     setIsSaving(true);
     try {
       switch (currentQuestion.id) {
-        case "colors":
+        case "scrape":
+          // Only reached if the user picked from the manual palette below
+          // the scrape log — the "Use this logo & colors" one-click-accept
+          // button (useExtractedKit) already saves on its own click, and
+          // this doesn't re-save over it if the user never touched the
+          // manual picker (colors stays whatever useExtractedKit set it to,
+          // which is already persisted).
           if (colors.length > 0) await updateBrand(token, selectedBrandId, { colors });
           break;
-        case "voiceChips":
-          if (voiceTone.length > 0) await upsertOnboarding(token, selectedBrandId, { voice: voiceTone.join(", ") });
+        case "essentials": {
+          const payload: OnboardingUpsertInput = {};
+          if (voiceTone.length > 0) payload.voice = voiceTone.join(", ");
+          if (goals.length > 0) payload.goals = goals;
+          if (audience.trim()) payload.audience = audience.trim();
+          if (productDescription.trim()) payload.product_catalog = { description: productDescription.trim() };
+          if (competitorsText.trim()) payload.competitors = splitCommaList(competitorsText);
+          if (Object.keys(payload).length > 0) await upsertOnboarding(token, selectedBrandId, payload);
           break;
-        case "goals":
-          if (goals.length > 0) await upsertOnboarding(token, selectedBrandId, { goals });
-          break;
-        case "audience":
-          if (audience.trim()) await upsertOnboarding(token, selectedBrandId, { audience: audience.trim() });
-          break;
-        case "product":
-          if (productDescription.trim())
-            await upsertOnboarding(token, selectedBrandId, {
-              product_catalog: { description: productDescription.trim() },
-            });
-          break;
-        case "competitors":
-          if (competitorsText.trim())
-            await upsertOnboarding(token, selectedBrandId, { competitors: splitCommaList(competitorsText) });
-          break;
-        case "mission":
-          if (mission.trim()) await upsertOnboarding(token, selectedBrandId, { mission: mission.trim() });
-          break;
-        case "contentDosDonts":
-          if (contentDosDontsText.trim())
-            await upsertOnboarding(token, selectedBrandId, {
-              content_dos_donts: splitCommaList(contentDosDontsText),
-            });
-          break;
-        case "postingCadence":
-          if (postingCadence) await upsertOnboarding(token, selectedBrandId, { posting_cadence: postingCadence });
-          break;
+        }
         default:
           break;
       }
@@ -616,7 +548,11 @@ export default function OnboardingInterviewPage() {
       try {
         const result = await fetchNextOnboardingQuestions(token, selectedBrandId, pageIndex, answers);
         if (result.done || result.questions.length === 0) {
-          await finishInterview();
+          // Aarav's dynamic phase is the last *question-asking* step — the
+          // asset library after this is a totally optional add-anything
+          // step, not another question, so it gets its own stage rather
+          // than counting toward "how many things does Aarav ask."
+          setStage("assets");
           return;
         }
         setDynamicQuestions(result.questions);
@@ -797,6 +733,88 @@ export default function OnboardingInterviewPage() {
               </motion.div>
             )}
           </AnimatePresence>
+        </div>
+      </div>
+    );
+  }
+
+  if (stage === "assets") {
+    // A totally optional add-anything step after Aarav's own questions are
+    // done — deliberately not one of the 2 fixed pages nor part of the
+    // dynamic phase, since it isn't really a *question* at all.
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-canvas from-30% to-[#EEF1FF] px-6 py-11">
+        <div className="w-full max-w-[680px]">
+          <div className="mb-2.5 flex items-center gap-2 text-[11.5px] font-bold tracking-[.12em] text-brand-600">
+            ALMOST DONE
+          </div>
+          <h1 className="mb-1.5 text-[32px] font-bold leading-[1.12] tracking-tight text-ink-950">
+            Drop in anything that shows your brand at its best
+          </h1>
+          <p className="mb-6 text-sm text-ink-400">
+            Product photos, past posts, a style guide — totally optional, and you can always add more later.
+          </p>
+
+          <div className="rounded-[18px] border border-line-soft bg-white p-6 shadow-modal">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {UPLOAD_SLOTS.map(({ slot, label }) => {
+                const uploaded = assets.find((a) => a.slot === slot);
+                const isUploading = uploadingSlot === slot;
+                const isImage = uploaded?.content_type.startsWith("image/");
+                return (
+                  <label
+                    key={slot}
+                    className={
+                      "flex aspect-square cursor-pointer flex-col items-center justify-center gap-1.5 overflow-hidden rounded-[13px] border-[1.5px] p-2.5 text-center " +
+                      (uploaded ? "border-solid border-brand-200 bg-brand-50" : "border-dashed border-ink-100 bg-canvas")
+                    }
+                  >
+                    {isUploading ? (
+                      <span className="text-[11.5px] font-semibold text-ink-500">Uploading…</span>
+                    ) : uploaded ? (
+                      isImage ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={uploaded.url} alt={uploaded.filename} className="h-full w-full object-cover" />
+                      ) : (
+                        <>
+                          <span className="text-lg">✓</span>
+                          <span className="line-clamp-2 text-[11px] font-semibold leading-tight text-ink-600">
+                            {uploaded.filename}
+                          </span>
+                        </>
+                      )
+                    ) : (
+                      <>
+                        <span className="text-lg text-ink-100">＋</span>
+                        <span className="text-[11.5px] font-semibold leading-tight text-ink-500">{label}</span>
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      className="hidden"
+                      disabled={isUploading}
+                      aria-label={`Upload ${label}`}
+                      onChange={(e) => handleAssetUpload(slot, e.target.files?.[0] ?? null)}
+                    />
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-3 border-t border-line-faint pt-[18px]">
+              <button
+                type="button"
+                onClick={finishInterview}
+                disabled={isFinishingInterview}
+                className="text-[13.5px] font-semibold text-ink-300"
+              >
+                Skip
+              </button>
+              <Button onClick={finishInterview} isLoading={isFinishingInterview}>
+                Continue
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -1053,11 +1071,10 @@ export default function OnboardingInterviewPage() {
                       </Button>
                     </div>
                   ) : null}
-                </div>
-              ) : null}
 
-              {currentQuestion.type === "colors" ? (
-                <div>
+                  <h4 className="mb-2 mt-6 text-xs font-bold uppercase tracking-wide text-ink-400">
+                    Or pick your palette and logo manually
+                  </h4>
                   <div className="mb-4 flex flex-wrap gap-3">
                     {PRESET_COLORS.map((hex) => (
                       <button
@@ -1117,190 +1134,134 @@ export default function OnboardingInterviewPage() {
                 </div>
               ) : null}
 
-              {currentQuestion.id === "voiceChips" ? (
-                <div className="flex flex-wrap gap-2.5">
-                  {VOICE_CHIP_OPTIONS.map((option) => (
-                    <ChipButton
-                      key={option}
-                      label={option}
-                      selected={voiceTone.includes(option)}
-                      onClick={() => toggleChip(voiceTone, setVoiceTone, option)}
-                    />
-                  ))}
-                </div>
-              ) : null}
-
-              {currentQuestion.id === "goals" ? (
-                <div className="flex flex-wrap gap-2.5">
-                  {GOAL_CHIP_OPTIONS.map((option) => (
-                    <ChipButton
-                      key={option}
-                      label={option}
-                      selected={goals.includes(option)}
-                      onClick={() => toggleChip(goals, setGoals, option)}
-                    />
-                  ))}
-                </div>
-              ) : null}
-
-              {currentQuestion.type === "voice" ? (
-                <div>
-                  {!useTextFallback ? (
-                    <>
-                      <div className="flex items-center gap-[18px] rounded-[14px] border border-brand-100 bg-brand-50 p-5">
-                        <button
-                          type="button"
-                          onClick={isRecording ? stopRecording : startRecording}
-                          disabled={isTranscribing}
-                          aria-pressed={isRecording}
-                          aria-label={isRecording ? "Stop recording" : "Start recording"}
-                          className={
-                            "flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-xl text-white transition-colors " +
-                            (isRecording ? "bg-danger animate-rd-pulse" : "bg-brand-600 hover:bg-brand-700")
-                          }
-                        >
-                          {isRecording ? "■" : "●"}
-                        </button>
-                        <div className="flex h-11 flex-1 items-center gap-[3px]">
-                          {Array.from({ length: 32 }).map((_, index) => (
-                            <i
-                              key={index}
-                              className={
-                                "flex-1 rounded-sm bg-brand-600 " +
-                                (isRecording ? "animate-rd-wave opacity-55" : "opacity-15")
-                              }
-                              style={{
-                                height: `${20 + ((index * 37) % 60)}%`,
-                                animationDelay: `${(index % 8) * 0.1}s`,
-                              }}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                      <p className="mt-3 text-xs text-ink-300">
-                        {isTranscribing
-                          ? "Transcribing your answer…"
-                          : isRecording
-                            ? "Recording — tap the square to stop."
-                            : "Tap the mic to record your answer. Transcribed on our own server via an open-source model — nothing leaves our infrastructure."}{" "}
-                        <button
-                          type="button"
-                          className="font-semibold text-brand-600"
-                          onClick={() => setUseTextFallback(true)}
-                        >
-                          Prefer typing? Answer in text instead
-                        </button>
-                      </p>
-                      {recordingError && (
-                        <p role="alert" className="mt-2 text-xs font-medium text-danger">
-                          {recordingError}
-                        </p>
-                      )}
-                      {audience.trim() && (
-                        <div className="mt-3 rounded-[13px] border border-line-soft bg-white p-3.5 text-sm leading-relaxed text-ink-800">
-                          {audience}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <textarea
-                      value={audience}
-                      onChange={(e) => setAudience(e.target.value)}
-                      placeholder="Type your answer — Aarav reads tone, not just words."
-                      className="h-[132px] w-full resize-none rounded-[13px] border border-line bg-white p-3.5 text-sm leading-relaxed outline-none focus:border-brand-500"
-                    />
-                  )}
-                </div>
-              ) : null}
-
-              {currentQuestion.type === "text" ? (
-                <textarea
-                  value={
-                    currentQuestion.id === "product"
-                      ? productDescription
-                      : currentQuestion.id === "competitors"
-                        ? competitorsText
-                        : currentQuestion.id === "mission"
-                          ? mission
-                          : contentDosDontsText
-                  }
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    if (currentQuestion.id === "product") setProductDescription(value);
-                    else if (currentQuestion.id === "competitors") setCompetitorsText(value);
-                    else if (currentQuestion.id === "mission") setMission(value);
-                    else setContentDosDontsText(value);
-                  }}
-                  placeholder={
-                    currentQuestion.id === "competitors"
-                      ? "e.g. Acme Corp, Widgetron"
-                      : currentQuestion.id === "contentDosDonts"
-                        ? "e.g. Never joke about pricing, don't show competitor logos"
-                        : currentQuestion.id === "mission"
-                          ? "e.g. Make professional-grade tools every small team can afford."
-                          : "Type your answer — Aarav reads tone, not just words."
-                  }
-                  className="h-[132px] w-full resize-none rounded-[13px] border border-line bg-white p-3.5 text-sm leading-relaxed outline-none focus:border-brand-500"
-                />
-              ) : null}
-
-              {currentQuestion.type === "chipsSingle" ? (
-                <div className="flex flex-wrap gap-2.5">
-                  {CADENCE_OPTIONS.map((option) => (
-                    <ChipButton
-                      key={option}
-                      label={option}
-                      selected={postingCadence === option}
-                      onClick={() => setPostingCadence(option)}
-                    />
-                  ))}
-                </div>
-              ) : null}
-
-              {currentQuestion.type === "upload" ? (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {UPLOAD_SLOTS.map(({ slot, label }) => {
-                    const uploaded = assets.find((a) => a.slot === slot);
-                    const isUploading = uploadingSlot === slot;
-                    const isImage = uploaded?.content_type.startsWith("image/");
-                    return (
-                      <label
-                        key={slot}
-                        className={
-                          "flex aspect-square cursor-pointer flex-col items-center justify-center gap-1.5 overflow-hidden rounded-[13px] border-[1.5px] p-2.5 text-center " +
-                          (uploaded ? "border-solid border-brand-200 bg-brand-50" : "border-dashed border-ink-100 bg-canvas")
-                        }
-                      >
-                        {isUploading ? (
-                          <span className="text-[11.5px] font-semibold text-ink-500">Uploading…</span>
-                        ) : uploaded ? (
-                          isImage ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={uploaded.url} alt={uploaded.filename} className="h-full w-full object-cover" />
-                          ) : (
-                            <>
-                              <span className="text-lg">✓</span>
-                              <span className="line-clamp-2 text-[11px] font-semibold leading-tight text-ink-600">
-                                {uploaded.filename}
-                              </span>
-                            </>
-                          )
-                        ) : (
-                          <>
-                            <span className="text-lg text-ink-100">＋</span>
-                            <span className="text-[11.5px] font-semibold leading-tight text-ink-500">{label}</span>
-                          </>
-                        )}
-                        <input
-                          type="file"
-                          className="hidden"
-                          disabled={isUploading}
-                          aria-label={`Upload ${label}`}
-                          onChange={(e) => handleAssetUpload(slot, e.target.files?.[0] ?? null)}
+              {currentQuestion.type === "essentials" ? (
+                <div className="space-y-6">
+                  <div>
+                    <h4 className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">
+                      Brand voice — pick as many as fit
+                    </h4>
+                    <div className="flex flex-wrap gap-2.5">
+                      {VOICE_CHIP_OPTIONS.map((option) => (
+                        <ChipButton
+                          key={option}
+                          label={option}
+                          selected={voiceTone.includes(option)}
+                          onClick={() => toggleChip(voiceTone, setVoiceTone, option)}
                         />
-                      </label>
-                    );
-                  })}
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">
+                      Goals for the next quarter
+                    </h4>
+                    <div className="flex flex-wrap gap-2.5">
+                      {GOAL_CHIP_OPTIONS.map((option) => (
+                        <ChipButton
+                          key={option}
+                          label={option}
+                          selected={goals.includes(option)}
+                          onClick={() => toggleChip(goals, setGoals, option)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">
+                      Who are you actually trying to reach?
+                    </h4>
+                    {!useTextFallback ? (
+                      <>
+                        <div className="flex items-center gap-[18px] rounded-[14px] border border-brand-100 bg-brand-50 p-5">
+                          <button
+                            type="button"
+                            onClick={isRecording ? stopRecording : startRecording}
+                            disabled={isTranscribing}
+                            aria-pressed={isRecording}
+                            aria-label={isRecording ? "Stop recording" : "Start recording"}
+                            className={
+                              "flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-xl text-white transition-colors " +
+                              (isRecording ? "bg-danger animate-rd-pulse" : "bg-brand-600 hover:bg-brand-700")
+                            }
+                          >
+                            {isRecording ? "■" : "●"}
+                          </button>
+                          <div className="flex h-11 flex-1 items-center gap-[3px]">
+                            {Array.from({ length: 32 }).map((_, index) => (
+                              <i
+                                key={index}
+                                className={
+                                  "flex-1 rounded-sm bg-brand-600 " +
+                                  (isRecording ? "animate-rd-wave opacity-55" : "opacity-15")
+                                }
+                                style={{
+                                  height: `${20 + ((index * 37) % 60)}%`,
+                                  animationDelay: `${(index % 8) * 0.1}s`,
+                                }}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                        <p className="mt-3 text-xs text-ink-300">
+                          {isTranscribing
+                            ? "Transcribing your answer…"
+                            : isRecording
+                              ? "Recording — tap the square to stop."
+                              : "Tap the mic to record your answer. Transcribed on our own server via an open-source model — nothing leaves our infrastructure."}{" "}
+                          <button
+                            type="button"
+                            className="font-semibold text-brand-600"
+                            onClick={() => setUseTextFallback(true)}
+                          >
+                            Prefer typing? Answer in text instead
+                          </button>
+                        </p>
+                        {recordingError && (
+                          <p role="alert" className="mt-2 text-xs font-medium text-danger">
+                            {recordingError}
+                          </p>
+                        )}
+                        {audience.trim() && (
+                          <div className="mt-3 rounded-[13px] border border-line-soft bg-white p-3.5 text-sm leading-relaxed text-ink-800">
+                            {audience}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <textarea
+                        value={audience}
+                        onChange={(e) => setAudience(e.target.value)}
+                        placeholder="Type your answer — Aarav reads tone, not just words."
+                        className="h-[100px] w-full resize-none rounded-[13px] border border-line bg-white p-3.5 text-sm leading-relaxed outline-none focus:border-brand-500"
+                      />
+                    )}
+                  </div>
+
+                  <div>
+                    <h4 className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">
+                      What do you sell, and who&apos;s it for?
+                    </h4>
+                    <textarea
+                      value={productDescription}
+                      onChange={(e) => setProductDescription(e.target.value)}
+                      placeholder="The short version — Aarav will ask about the details himself."
+                      className="h-[100px] w-full resize-none rounded-[13px] border border-line bg-white p-3.5 text-sm leading-relaxed outline-none focus:border-brand-500"
+                    />
+                  </div>
+
+                  <div>
+                    <h4 className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-400">
+                      Who are your top competitors?
+                    </h4>
+                    <textarea
+                      value={competitorsText}
+                      onChange={(e) => setCompetitorsText(e.target.value)}
+                      placeholder="Comma-separated is fine — Ved researches how you compare."
+                      className="h-[100px] w-full resize-none rounded-[13px] border border-line bg-white p-3.5 text-sm leading-relaxed outline-none focus:border-brand-500"
+                    />
+                  </div>
                 </div>
               ) : null}
 
@@ -1313,7 +1274,7 @@ export default function OnboardingInterviewPage() {
                     Skip
                   </button>
                   <Button onClick={handleNext} isLoading={isSaving}>
-                    {stepIndex === QUESTIONS.length - 1 ? "Finish interview" : "Continue"}
+                    {stepIndex === QUESTIONS.length - 1 ? "Hand off to Aarav" : "Continue"}
                   </Button>
                 </div>
               </div>
