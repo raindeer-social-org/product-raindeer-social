@@ -15,6 +15,8 @@ import {
   uploadBrandLogo,
   uploadOnboardingAsset,
   upsertOnboarding,
+  type DynamicAnswerSubmit,
+  type DynamicQuestion,
   type ExtractedBrandKit,
   type OnboardingAsset,
   type ResearchStreamEvent,
