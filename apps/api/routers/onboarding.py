@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from apps.api.auth.dependencies import CurrentUser, get_current_user
-from apps.api.config.database import get_db
+from apps.api.config.database import SessionLocal, get_db
 from apps.api.middleware.rbac import require_role
 from apps.api.models import (
     ONBOARDING_ASSET_SLOTS,
@@ -169,28 +169,54 @@ def stream_research_preview(
     """
     brand = _get_org_brand(db, brand_id, current_user.org_id)
     website = (brand.product_catalog or {}).get("website") if isinstance(brand.product_catalog, dict) else None
+    brand_name = brand.name
 
     def event_stream() -> Generator[str, None, None]:
-        yield _sse("log", {"text": f"Connecting to {brand.name}’s public presence…"})
+        # This generator is consumed lazily by StreamingResponse, after
+        # stream_research_preview() has already returned — by then the
+        # get_db() dependency's session (and `brand`, loaded from it) is
+        # already committed and closed, so any attribute access on `brand`
+        # here would raise DetachedInstanceError. Everything needed from
+        # `brand` before this point is captured as plain locals above
+        # (brand_name, website); anything needing a live session past that
+        # point (the scrape/persist below) opens and closes its own.
+        yield _sse("log", {"text": f"Connecting to {brand_name}’s public presence…"})
         yield _sse("log", {"text": "Searching the public web for a company overview…"})
-        results = search_brand_overview(brand.name)
+        results = search_brand_overview(brand_name)
         yield _sse("log", {"text": f"Found {len(results)} public signal(s)."})
         for result in results:
             yield _sse("signal", {"title": result.title, "url": result.url})
 
         if website:
             yield _sse("log", {"text": f"Fetching {website}…"})
-            research = run_website_scrape(db, brand, website)
-            if research.website_summary or research.website_logo_url or research.website_colors:
+            extracted: dict | None = None
+            stream_db = SessionLocal()
+            try:
+                stream_brand = stream_db.get(Brand, brand_id)
+                if stream_brand is not None:
+                    research = run_website_scrape(stream_db, stream_brand, website)
+                    # Capture into plain locals before commit/close below —
+                    # commit() expires ORM attributes by default, and
+                    # close() detaches the instance entirely, so touching
+                    # `research.website_*` after either would raise
+                    # DetachedInstanceError (see event_stream's docstring
+                    # note above for the same failure mode on `brand`).
+                    if research.website_summary or research.website_logo_url or research.website_colors:
+                        extracted = {
+                            "logo_url": research.website_logo_url,
+                            "colors": research.website_colors or [],
+                            "summary": research.website_summary,
+                        }
+                stream_db.commit()
+            except Exception:
+                stream_db.rollback()
+                extracted = None
+            finally:
+                stream_db.close()
+
+            if extracted:
                 yield _sse("log", {"text": "Extracted a logo, colors, and a brand summary."})
-                yield _sse(
-                    "extracted",
-                    {
-                        "logo_url": research.website_logo_url,
-                        "colors": research.website_colors or [],
-                        "summary": research.website_summary,
-                    },
-                )
+                yield _sse("extracted", extracted)
             else:
                 yield _sse("log", {"text": "Couldn't extract anything usable from that site — that's okay."})
 
