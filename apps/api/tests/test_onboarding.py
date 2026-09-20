@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.auth.jwt import create_access_token, hash_password
 from apps.api.main import app
-from apps.api.models import Brand, Organization, User, UserRole
+from apps.api.models import Brand, OnboardingDynamicAnswer, Organization, User, UserRole
 
 client = TestClient(app)
 uses_test_session = pytest.mark.usefixtures("override_get_db")
@@ -522,3 +522,112 @@ def test_upload_onboarding_asset_rejects_unknown_slot(db_session) -> None:
     )
 
     assert response.status_code == 400
+
+
+# --- Adaptive, LLM-generated follow-up questions (Issue #153) ---
+
+_NEXT_QUESTIONS_PATCH_TARGET = "apps.api.routers.onboarding.generate_next_page"
+_DYNAMIC_LLM_PATCH_TARGET = "packages.agents.onboarding.dynamic_questions.get_llm_provider"
+
+
+@uses_test_session
+def test_next_questions_first_call_generates_page_one(db_session) -> None:
+    brand, user = _setup_brand(db_session)
+
+    with patch(_NEXT_QUESTIONS_PATCH_TARGET) as mock_generate:
+        mock_generate.return_value = (
+            False,
+            [{"id": "integrations", "type": "text", "title": "What do you integrate with?", "sub": "", "options": None}],
+        )
+        response = client.post(
+            f"/brands/{brand.id}/onboarding/next-questions",
+            json={},
+            headers=_auth_headers(user),
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["done"] is False
+    assert body["page_index"] == 1
+    assert body["questions"][0]["id"] == "integrations"
+    # First call (page_index defaults to 0, no answers) generates page 1 —
+    # confirm the router asked for page 1, not page 0.
+    assert mock_generate.call_args.args[3] == 1
+
+
+@uses_test_session
+def test_next_questions_persists_submitted_answers(db_session) -> None:
+    brand, user = _setup_brand(db_session)
+    question = {"id": "integrations", "type": "text", "title": "What do you integrate with?", "sub": "", "options": None}
+
+    with patch(_NEXT_QUESTIONS_PATCH_TARGET) as mock_generate:
+        mock_generate.return_value = (True, [])
+        response = client.post(
+            f"/brands/{brand.id}/onboarding/next-questions",
+            json={"page_index": 1, "answers": [{"question": question, "answer": "QuickBooks and Stripe"}]},
+            headers=_auth_headers(user),
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"done": True, "page_index": 0, "questions": []}
+
+    stored = db_session.query(OnboardingDynamicAnswer).filter_by(brand_id=brand.id).all()
+    assert len(stored) == 1
+    assert stored[0].page_index == 1
+    assert stored[0].question["id"] == "integrations"
+    assert stored[0].answer == "QuickBooks and Stripe"
+
+    # The next generation call should see what was just persisted.
+    prior_pages_arg = mock_generate.call_args.args[2]
+    assert prior_pages_arg == [{"page_index": 1, "answers": [{"question": question, "answer": "QuickBooks and Stripe"}]}]
+
+
+@uses_test_session
+def test_next_questions_hard_caps_without_calling_llm(db_session) -> None:
+    """page_index=4 (MAX_DYNAMIC_PAGES) means the next page would be 5,
+    past the cap — generate_next_page must short-circuit before ever
+    reaching the LLM provider."""
+    brand, user = _setup_brand(db_session)
+
+    with patch(_DYNAMIC_LLM_PATCH_TARGET) as mock_get_llm:
+        response = client.post(
+            f"/brands/{brand.id}/onboarding/next-questions",
+            json={"page_index": 4, "answers": []},
+            headers=_auth_headers(user),
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"done": True, "page_index": 0, "questions": []}
+    mock_get_llm.assert_not_called()
+
+
+@uses_test_session
+def test_next_questions_degrades_gracefully_on_llm_failure(db_session) -> None:
+    brand, user = _setup_brand(db_session)
+
+    with patch(_DYNAMIC_LLM_PATCH_TARGET) as mock_get_llm:
+        mock_get_llm.return_value.complete.side_effect = RuntimeError("provider down")
+        response = client.post(
+            f"/brands/{brand.id}/onboarding/next-questions",
+            json={},
+            headers=_auth_headers(user),
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"done": True, "page_index": 0, "questions": []}
+
+
+@uses_test_session
+def test_viewer_cannot_call_next_questions(db_session) -> None:
+    brand, editor = _setup_brand(db_session, UserRole.EDITOR)
+    _brand2, viewer = _setup_brand(db_session, UserRole.VIEWER)
+    viewer.organization_id = editor.organization_id
+    db_session.flush()
+
+    response = client.post(
+        f"/brands/{brand.id}/onboarding/next-questions",
+        json={},
+        headers=_auth_headers(viewer),
+    )
+
+    assert response.status_code == 403
