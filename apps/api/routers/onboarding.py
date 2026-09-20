@@ -30,7 +30,11 @@ from apps.api.schemas.onboarding import (
 from packages.agents.onboarding.dynamic_questions import generate_next_page
 from packages.agents.onboarding.embedding import embed_brand_report
 from packages.agents.onboarding.graph import run_onboarding_agent
-from packages.agents.onboarding.research_step import run_onboarding_research, search_brand_overview
+from packages.agents.onboarding.research_step import (
+    run_onboarding_research,
+    run_website_scrape,
+    search_brand_overview,
+)
 from packages.integrations.registry import get_speech_provider, get_storage_provider
 
 router = APIRouter(prefix="/brands/{brand_id}/onboarding", tags=["onboarding"])
@@ -139,10 +143,9 @@ def stream_research_preview(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> StreamingResponse:
-    """Issue #123: additive, read-only Server-Sent-Events endpoint the
-    Aarav onboarding interview's "scrape" question uses to show real
-    progress while previewing what public web research turns up for a
-    brand.
+    """Issue #123: Server-Sent-Events endpoint the Aarav onboarding
+    interview's "scrape" question uses to show real progress while
+    previewing what public web research turns up for a brand.
 
     This reuses the exact same SearchProvider-backed search
     (search_brand_overview, a thin wrapper the onboarding research step
@@ -151,12 +154,21 @@ def stream_research_preview(
     in the flow. It deliberately does NOT call run_onboarding_research
     itself: that function also requires a competitors list and is only
     reachable once onboarding.is_complete, neither of which holds this
-    early in the interview. Nothing here is persisted — it's a live
-    preview, not a second copy of OnboardingResearch — so there's no new
-    table/column and no interaction with the real research run that
-    happens later at /run-agent.
+    early in the interview.
+
+    Issue #152 adds a second, real phase after the search preview: if the
+    brand has a website on file (product_catalog["website"], the field
+    this same interview step already displays), this actually fetches and
+    scrapes it (run_website_scrape) — extracting a logo/color-palette
+    suggestion and an LLM-distilled summary — and, unlike the search
+    preview above, DOES persist the result onto OnboardingResearch (an
+    "extracted" event carries it to the frontend as a one-click-accept
+    suggestion; see interview/page.tsx's runScrape). A brand with no
+    website on file, or an unreachable one, simply skips straight to
+    "done" — this never blocks the interview.
     """
     brand = _get_org_brand(db, brand_id, current_user.org_id)
+    website = (brand.product_catalog or {}).get("website") if isinstance(brand.product_catalog, dict) else None
 
     def event_stream() -> Generator[str, None, None]:
         yield _sse("log", {"text": f"Connecting to {brand.name}’s public presence…"})
@@ -165,6 +177,23 @@ def stream_research_preview(
         yield _sse("log", {"text": f"Found {len(results)} public signal(s)."})
         for result in results:
             yield _sse("signal", {"title": result.title, "url": result.url})
+
+        if website:
+            yield _sse("log", {"text": f"Fetching {website}…"})
+            research = run_website_scrape(db, brand, website)
+            if research.website_summary or research.website_logo_url or research.website_colors:
+                yield _sse("log", {"text": "Extracted a logo, colors, and a brand summary."})
+                yield _sse(
+                    "extracted",
+                    {
+                        "logo_url": research.website_logo_url,
+                        "colors": research.website_colors or [],
+                        "summary": research.website_summary,
+                    },
+                )
+            else:
+                yield _sse("log", {"text": "Couldn't extract anything usable from that site — that's okay."})
+
         yield _sse("done", {"count": len(results)})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

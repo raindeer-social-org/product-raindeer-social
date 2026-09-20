@@ -25,6 +25,8 @@ from packages.integrations.storage.base import StorageProvider
 from packages.integrations.storage.supabase_provider import SupabaseStorageProvider
 from packages.integrations.video_gen.base import VideoProvider
 from packages.integrations.video_gen.runway_provider import RunwayProvider
+from packages.integrations.webscrape.base import WebScrapeProvider
+from packages.integrations.webscrape.httpx_provider import HttpxWebScrapeProvider
 
 _SEARCH_PROVIDERS = {
     "tavily": lambda settings: TavilyProvider(api_key=settings.tavily_api_key or ""),
@@ -167,6 +169,10 @@ _SPEECH_PROVIDERS = {
     "whisper": lambda settings: WhisperSpeechProvider(model_size=settings.whisper_model_size),
 }
 
+_WEBSCRAPE_PROVIDERS = {
+    "httpx": lambda settings: HttpxWebScrapeProvider(),
+}
+
 
 def get_search_provider() -> SearchProvider:
     settings = get_settings()
@@ -279,5 +285,17 @@ def get_speech_provider() -> SpeechToTextProvider:
         raise ValueError(
             f"Unknown SPEECH_PROVIDER '{settings.speech_provider}'. "
             f"Valid options: {sorted(_SPEECH_PROVIDERS)}"
+        ) from None
+    return factory(settings)
+
+
+def get_webscrape_provider() -> WebScrapeProvider:
+    settings = get_settings()
+    try:
+        factory = _WEBSCRAPE_PROVIDERS[settings.webscrape_provider]
+    except KeyError:
+        raise ValueError(
+            f"Unknown WEBSCRAPE_PROVIDER '{settings.webscrape_provider}'. "
+            f"Valid options: {sorted(_WEBSCRAPE_PROVIDERS)}"
         ) from None
     return factory(settings)
