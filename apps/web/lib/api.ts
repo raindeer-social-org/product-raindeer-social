@@ -922,11 +922,20 @@ export async function runOnboardingAgent(token: string, brandId: string): Promis
 }
 
 // Mirrors the events apps/api/routers/onboarding.py::stream_research_preview
-// emits ("log"/"signal"/"done"), each carrying a small JSON `data` payload
-// ({text} for log, {title,url} for signal, {count} for done).
+// emits ("log"/"signal"/"extracted"/"done"), each carrying a small JSON
+// `data` payload ({text} for log, {title,url} for signal, {count} for
+// done). "extracted" (Issue #152) carries a real website-scrape result —
+// {logo_url, colors, summary} — only emitted when the brand has a website
+// on file and the scrape found something usable.
 export interface ResearchStreamEvent {
-  event: "log" | "signal" | "done";
+  event: "log" | "signal" | "extracted" | "done";
   data: Record<string, unknown>;
+}
+
+export interface ExtractedBrandKit {
+  logoUrl: string | null;
+  colors: string[];
+  summary: string | null;
 }
 
 // Reads the onboarding research-preview SSE stream (Issue #123's Aarav

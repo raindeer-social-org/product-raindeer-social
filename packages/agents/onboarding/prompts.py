@@ -36,13 +36,18 @@ Preferred posting cadence: {onboarding_response.get("posting_cadence") or "(not 
 Brand overview: {json.dumps(research.get("brand_overview"))}
 Competitor positioning: {json.dumps(research.get("competitor_positioning"))}
 
+## What the brand's own website says about itself (Issue #152)
+{research.get("website_summary") or "(no website scrape available)"}
+
 ## Task
 Produce a JSON object with exactly these top-level string keys:
 - "voice_and_tone": 2-3 sentences describing the brand's voice and tone —
   incorporate the stated mission and any content dos/don'ts so this reads
   as this brand's actual voice, not a generic tone description
 - "audience": 2-3 sentences describing the target audience
-- "product_catalog_summary": a summary of the product catalog
+- "product_catalog_summary": a summary of the product catalog — ground it
+  in what the brand's own website says about itself above when that's
+  available, not just the questionnaire's product_catalog field alone
 - "competitive_positioning": how this brand is positioned against its
   competitors, grounded in the web research above
 
