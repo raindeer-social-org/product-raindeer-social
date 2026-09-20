@@ -11,6 +11,45 @@ client = TestClient(app)
 uses_test_session = pytest.mark.usefixtures("override_get_db")
 
 
+def _session_local_stub(db_session):
+    """research-stream's website-scrape branch (issue #152) intentionally
+    opens its own SessionLocal() rather than reusing Depends(get_db) — see
+    that function's docstring for why (a DetachedInstanceError fix: the
+    request-scoped session is already closed by the time this lazily-
+    streamed branch runs). override_get_db's db_session fixture only
+    patches Depends(get_db), so a real SessionLocal() call here would open
+    a second, separate connection that can't see this test's uncommitted
+    setup data. This stub makes `apps.api.routers.onboarding.SessionLocal`
+    return a thin proxy onto the same db_session instead — delegating
+    reads/writes to it while no-op'ing commit/close so the test's own
+    transaction (rolled back in the db_session fixture's teardown) stays
+    in charge of the connection throughout."""
+
+    class _Proxy:
+        def get(self, *args, **kwargs):
+            return db_session.get(*args, **kwargs)
+
+        def add(self, *args, **kwargs):
+            db_session.add(*args, **kwargs)
+
+        def flush(self, *args, **kwargs):
+            db_session.flush(*args, **kwargs)
+
+        def refresh(self, *args, **kwargs):
+            db_session.refresh(*args, **kwargs)
+
+        def commit(self):
+            db_session.flush()
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            pass
+
+    return lambda: _Proxy()
+
+
 def _setup_brand(db_session, role: UserRole = UserRole.EDITOR, suffix: str = "") -> tuple[Brand, User]:
     org = Organization(name="Acme Agency")
     db_session.add(org)
@@ -266,6 +305,7 @@ def test_research_stream_emits_extracted_event_when_brand_has_a_website(db_sessi
     with (
         patch("apps.api.routers.onboarding.search_brand_overview", return_value=[SearchResult(title="x", url="https://acme.test", content="...")]),
         patch("apps.api.routers.onboarding.run_website_scrape", side_effect=fake_run_website_scrape) as mock_scrape,
+        patch("apps.api.routers.onboarding.SessionLocal", new=_session_local_stub(db_session)),
     ):
         response = client.get(f"/brands/{brand.id}/onboarding/research-stream", headers=headers)
 
@@ -296,6 +336,7 @@ def test_research_stream_skips_extraction_event_when_scrape_finds_nothing(db_ses
     with (
         patch("apps.api.routers.onboarding.search_brand_overview", return_value=[]),
         patch("apps.api.routers.onboarding.run_website_scrape", side_effect=fake_run_website_scrape),
+        patch("apps.api.routers.onboarding.SessionLocal", new=_session_local_stub(db_session)),
     ):
         response = client.get(f"/brands/{brand.id}/onboarding/research-stream", headers=headers)
 
