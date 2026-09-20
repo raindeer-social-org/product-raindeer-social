@@ -24,6 +24,7 @@ const connectLinkedInMock = vi.fn();
 const fetchOnboardingAssetsMock = vi.fn();
 const uploadOnboardingAssetMock = vi.fn();
 const transcribeOnboardingVoiceAnswerMock = vi.fn();
+const fetchNextOnboardingQuestionsMock = vi.fn();
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
@@ -41,6 +42,7 @@ vi.mock("@/lib/api", async () => {
     fetchOnboardingAssets: (...args: unknown[]) => fetchOnboardingAssetsMock(...args),
     uploadOnboardingAsset: (...args: unknown[]) => uploadOnboardingAssetMock(...args),
     transcribeOnboardingVoiceAnswer: (...args: unknown[]) => transcribeOnboardingVoiceAnswerMock(...args),
+    fetchNextOnboardingQuestions: (...args: unknown[]) => fetchNextOnboardingQuestionsMock(...args),
   };
 });
 
@@ -86,6 +88,7 @@ describe("OnboardingInterviewPage", () => {
     fetchOnboardingAssetsMock.mockReset();
     uploadOnboardingAssetMock.mockReset();
     transcribeOnboardingVoiceAnswerMock.mockReset();
+    fetchNextOnboardingQuestionsMock.mockReset();
 
     window.localStorage.clear();
     window.localStorage.setItem("raindeer.auth.token", "test-token");
@@ -97,6 +100,10 @@ describe("OnboardingInterviewPage", () => {
     upsertOnboardingMock.mockResolvedValue({});
     completeOnboardingMock.mockResolvedValue({});
     fetchOnboardingAssetsMock.mockResolvedValue([]);
+    // Default: Aarav has nothing more to ask — most tests only care about
+    // the fixed questionnaire, so the dynamic phase should fall straight
+    // through to the connect step unless a test overrides this.
+    fetchNextOnboardingQuestionsMock.mockResolvedValue({ done: true, page_index: 0, questions: [] });
 
     streamOnboardingResearchMock.mockImplementation(
       async (
@@ -193,6 +200,84 @@ describe("OnboardingInterviewPage", () => {
     expect(await screen.findByText("Connect where you publish")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Enter Raindeer" }));
     expect(push).toHaveBeenCalledWith("/");
+  });
+
+  // --- Adaptive, LLM-generated follow-up questions (Issue #153) ---
+
+  const STATIC_QUESTION_TITLES = [
+    "Let's confirm your website",
+    "What are your brand colors?",
+    "How would you describe your brand's voice?",
+    "What are your goals for the next quarter?",
+    "Tell us about your audience, in your own words",
+    "What do you sell, and who's it for?",
+    "Who are your top competitors?",
+    "What's your brand's mission, in one line?",
+    "Anything your content should never say or show?",
+    "How often do you want to post?",
+    "Drop in anything that shows your brand at its best",
+  ];
+
+  async function skipAllStaticQuestions(user: ReturnType<typeof userEvent.setup>) {
+    for (const title of STATIC_QUESTION_TITLES) {
+      await screen.findByText(title);
+      await user.click(screen.getByText("Skip"));
+    }
+  }
+
+  it("renders an Aarav-generated question after the fixed questionnaire and submits the answer", async () => {
+    const user = userEvent.setup();
+    fetchNextOnboardingQuestionsMock.mockResolvedValueOnce({
+      done: false,
+      page_index: 1,
+      questions: [
+        {
+          id: "integrations",
+          type: "text",
+          title: "What tools does LexStart integrate with?",
+          sub: "Helps Ved research the right competitors.",
+          options: null,
+        },
+      ],
+    });
+    fetchNextOnboardingQuestionsMock.mockResolvedValueOnce({ done: true, page_index: 0, questions: [] });
+
+    renderPage();
+    await skipAllStaticQuestions(user);
+
+    expect(await screen.findByText("What tools does LexStart integrate with?")).toBeInTheDocument();
+    expect(screen.getByText("ASKING SOMETHING NEW")).toBeInTheDocument();
+
+    await user.type(
+      screen.getByPlaceholderText("Type your answer — Aarav reads tone, not just words."),
+      "QuickBooks and Stripe"
+    );
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() => {
+      expect(fetchNextOnboardingQuestionsMock).toHaveBeenLastCalledWith("test-token", "brand-1", 1, [
+        {
+          question: {
+            id: "integrations",
+            type: "text",
+            title: "What tools does LexStart integrate with?",
+            sub: "Helps Ved research the right competitors.",
+            options: null,
+          },
+          answer: "QuickBooks and Stripe",
+        },
+      ]);
+    });
+    expect(await screen.findByText("Connect where you publish")).toBeInTheDocument();
+  });
+
+  it("finishes onboarding straight away when Aarav has nothing more to ask", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await skipAllStaticQuestions(user);
+
+    await waitFor(() => expect(fetchNextOnboardingQuestionsMock).toHaveBeenCalledWith("test-token", "brand-1", 0, []));
+    expect(await screen.findByText("Connect where you publish")).toBeInTheDocument();
   });
 
   async function skipTo(user: ReturnType<typeof userEvent.setup>, title: string) {

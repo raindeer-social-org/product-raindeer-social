@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     video_provider: str = "runway"
     image_provider: str = "fal"
     speech_provider: str = "whisper"
+    webscrape_provider: str = "httpx"
 
     # Onboarding's real voice-answer recording (Issue #144) is transcribed
     # via faster-whisper — a free, fully open-source, locally-run model
