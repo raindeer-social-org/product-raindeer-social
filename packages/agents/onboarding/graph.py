@@ -85,12 +85,16 @@ def run_onboarding_agent(
     brand: Brand,
     onboarding_response: OnboardingResponse,
     research: OnboardingResearch | None,
+    dynamic_qa: list[dict] | None = None,
 ) -> dict:
     """Runs the onboarding LangGraph graph end-to-end: questionnaire +
-    research in, structured brand_report out, written onto the Brand row.
-    Always logs an AgentRun — including on failure, where output is left
-    None but latency/timing is still captured — before letting the
-    exception (if any) propagate."""
+    research + Aarav's adaptive follow-up Q&A (Issue #153) in, structured
+    brand_report out, written onto the Brand row. `dynamic_qa` mirrors
+    apps/api/routers/onboarding.py::_prior_dynamic_pages's shape and is
+    optional so this remains callable (e.g. from existing tests) without a
+    dynamic-questions history. Always logs an AgentRun — including on
+    failure, where output is left None but latency/timing is still
+    captured — before letting the exception (if any) propagate."""
     prompt = build_synthesis_prompt(
         brand_name=brand.name,
         onboarding_response={
@@ -108,6 +112,7 @@ def run_onboarding_agent(
             "competitor_positioning": research.competitor_positioning if research else {},
             "website_summary": research.website_summary if research else None,
         },
+        dynamic_qa=dynamic_qa,
     )
 
     start = time.perf_counter()

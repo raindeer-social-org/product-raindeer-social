@@ -50,8 +50,11 @@ export interface BrandInput {
 }
 
 // Mirrors apps/api/schemas/brand.py::BrandUpdate — every field optional,
-// PATCH-style (only fields present are changed server-side).
-export type BrandUpdateInput = Partial<BrandInput>;
+// PATCH-style (only fields present are changed server-side). brand_report
+// isn't settable at creation (BrandCreate has no such field) but IS
+// editable afterward — Issue #158's onboarding capstone screen is the
+// first caller — so it's added here rather than on BrandInput.
+export type BrandUpdateInput = Partial<BrandInput> & { brand_report?: Record<string, unknown> | null };
 
 // Mirrors apps/api/models/content_calendar_event.py::CalendarEventStatus.
 export type CalendarEventStatus =

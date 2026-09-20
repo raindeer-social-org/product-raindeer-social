@@ -219,7 +219,8 @@ def run_agent(
         )
 
     research = run_onboarding_research(db, brand, response)
-    run_onboarding_agent(db, brand, response, research)
+    dynamic_qa = _prior_dynamic_pages(db, brand_id)
+    run_onboarding_agent(db, brand, response, research, dynamic_qa=dynamic_qa)
     # Re-embeds on every completion/update of brand_report — embed_brand_report
     # replaces this brand's existing chunks rather than appending to them.
     embed_brand_report(db, brand)
