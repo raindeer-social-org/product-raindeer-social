@@ -131,6 +131,11 @@ export default function OnboardingInterviewPage() {
   const [dynamicQuestions, setDynamicQuestions] = useState<DynamicQuestion[]>([]);
   const [dynamicAnswers, setDynamicAnswers] = useState<Record<string, string | string[]>>({});
   const [isDynamicLoading, setIsDynamicLoading] = useState(false);
+  // Purely cosmetic: a free-tier LLM call generating several thoughtful,
+  // specific multiple-choice questions can genuinely take a while — this
+  // swaps the loading copy after a few seconds so a slow-but-working
+  // response doesn't read as "stuck" during the wait.
+  const [isDynamicLoadingSlow, setIsDynamicLoadingSlow] = useState(false);
 
   const [voiceTone, setVoiceTone] = useState<string[]>([]);
   const [goals, setGoals] = useState<string[]>([]);
@@ -252,11 +257,19 @@ export default function OnboardingInterviewPage() {
           { text: `Found: ${event.data.title as string}`, tone: "signal" },
         ]);
       } else if (event.event === "extracted") {
+        const extractedColors = Array.isArray(event.data.colors) ? (event.data.colors as string[]) : [];
         setExtractedKit({
           logoUrl: typeof event.data.logo_url === "string" ? event.data.logo_url : null,
-          colors: Array.isArray(event.data.colors) ? (event.data.colors as string[]) : [],
+          colors: extractedColors,
           summary: typeof event.data.summary === "string" ? event.data.summary : null,
         });
+        // Pre-select what Aarav found as a starting point — still just a
+        // suggestion until Continue actually saves it, and every swatch
+        // (extracted or preset) stays individually toggleable below so
+        // the user can add/remove any of them before moving on.
+        if (extractedColors.length > 0) {
+          setColors((current) => Array.from(new Set([...current, ...extractedColors])));
+        }
       } else if (event.event === "done") {
         setScrapeLog((current) => [
           ...current,
@@ -340,23 +353,23 @@ export default function OnboardingInterviewPage() {
     setColors((current) => (current.includes(hex) ? current.filter((c) => c !== hex) : [...current, hex]));
   }
 
-  // Applies the real website-scrape's logo/colors (Issue #152) as the
-  // brand's own — one click, but never automatic, since a brand may
-  // prefer to pick manually even after a successful scrape.
-  async function useExtractedKit() {
-    if (!extractedKit || !token || !selectedBrandId) return;
+  // Applies the real website-scrape's logo (Issue #152) as the brand's
+  // own — one click, but never automatic. Colors extracted from the same
+  // scrape are handled separately: they're pre-selected into the shared,
+  // individually-toggleable swatch grid below (see the "extracted" event
+  // handler above) rather than needing their own apply step, so a brand
+  // can freely mix extracted and manually-picked colors before Continue
+  // saves whichever ones ended up selected.
+  async function useExtractedLogo() {
+    if (!extractedKit?.logoUrl || !token || !selectedBrandId) return;
     setIsApplyingKit(true);
     try {
-      const brand = await updateBrand(token, selectedBrandId, {
-        ...(extractedKit.logoUrl ? { logo_url: extractedKit.logoUrl } : {}),
-        ...(extractedKit.colors.length > 0 ? { colors: extractedKit.colors } : {}),
-      });
+      await updateBrand(token, selectedBrandId, { logo_url: extractedKit.logoUrl });
       await refreshBrands();
-      if (brand.colors) setColors(brand.colors);
       setAppliedKit(true);
-      pushToast("Applied the logo and colors from your website.", "success");
+      pushToast("Applied the logo from your website.", "success");
     } catch (err) {
-      pushToast(err instanceof ApiError ? err.message : "Failed to apply the extracted brand kit", "error");
+      pushToast(err instanceof ApiError ? err.message : "Failed to apply the extracted logo", "error");
     } finally {
       setIsApplyingKit(false);
     }
@@ -449,12 +462,11 @@ export default function OnboardingInterviewPage() {
     try {
       switch (currentQuestion.id) {
         case "scrape":
-          // Only reached if the user picked from the manual palette below
-          // the scrape log — the "Use this logo & colors" one-click-accept
-          // button (useExtractedKit) already saves on its own click, and
-          // this doesn't re-save over it if the user never touched the
-          // manual picker (colors stays whatever useExtractedKit set it to,
-          // which is already persisted).
+          // Colors (extracted + manually toggled, all one selectable pool
+          // — see the swatch grid below) save here on Continue; the logo
+          // has its own immediate "Use this logo" apply button instead,
+          // since there's only one to accept/reject rather than a set to
+          // toggle.
           if (colors.length > 0) await updateBrand(token, selectedBrandId, { colors });
           break;
         case "essentials": {
@@ -577,6 +589,15 @@ export default function OnboardingInterviewPage() {
     loadDynamicPage(0, []);
   }
 
+  useEffect(() => {
+    if (!isDynamicLoading) {
+      setIsDynamicLoadingSlow(false);
+      return;
+    }
+    const timer = setTimeout(() => setIsDynamicLoadingSlow(true), 6000);
+    return () => clearTimeout(timer);
+  }, [isDynamicLoading]);
+
   function setDynamicAnswer(questionId: string, value: string | string[]) {
     setDynamicAnswers((current) => ({ ...current, [questionId]: value }));
   }
@@ -677,6 +698,11 @@ export default function OnboardingInterviewPage() {
                     ? "Aarav is putting together your brand identity…"
                     : "Aarav is thinking of what to ask next…"}
                 </p>
+                {isDynamicLoadingSlow && !isFinishingInterview && (
+                  <p className="text-xs text-ink-300">
+                    Still working on it — a few well-chosen options beat a quick guess.
+                  </p>
+                )}
               </motion.div>
             ) : (
               <motion.div
@@ -1030,7 +1056,7 @@ export default function OnboardingInterviewPage() {
 
                   {extractedKit && (extractedKit.logoUrl || extractedKit.colors.length > 0) ? (
                     <div className="mt-4 rounded-[13px] border border-brand-100 bg-brand-50 p-4">
-                      <div className="mb-2.5 flex items-center gap-3">
+                      <div className="flex items-center gap-3">
                         {extractedKit.logoUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
@@ -1039,62 +1065,83 @@ export default function OnboardingInterviewPage() {
                             className="h-10 w-10 shrink-0 rounded-lg border border-black/5 object-contain bg-white"
                           />
                         ) : null}
-                        {extractedKit.colors.length > 0 ? (
-                          <div className="flex gap-1.5">
-                            {extractedKit.colors.map((hex) => (
-                              <span
-                                key={hex}
-                                title={hex}
-                                className="h-6 w-6 rounded-md border border-black/5"
-                                style={{ backgroundColor: hex }}
-                              />
-                            ))}
-                          </div>
-                        ) : null}
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-semibold text-ink-950">
-                            Found a logo and colors on your site
+                            {extractedKit.colors.length > 0
+                              ? `Found a logo and ${extractedKit.colors.length} color${extractedKit.colors.length === 1 ? "" : "s"} on your site`
+                              : "Found a logo on your site"}
                           </p>
                           {extractedKit.summary ? (
                             <p className="mt-0.5 line-clamp-2 text-[11.5px] text-ink-400">{extractedKit.summary}</p>
                           ) : null}
+                          {extractedKit.colors.length > 0 ? (
+                            <p className="mt-1 text-[11.5px] text-ink-400">
+                              Pre-selected below — tap any swatch to add or remove it.
+                            </p>
+                          ) : null}
                         </div>
+                        {extractedKit.logoUrl ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={useExtractedLogo}
+                            isLoading={isApplyingKit}
+                            disabled={appliedKit}
+                          >
+                            {appliedKit ? "Logo applied" : "Use this logo"}
+                          </Button>
+                        ) : null}
                       </div>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={useExtractedKit}
-                        isLoading={isApplyingKit}
-                        disabled={appliedKit}
-                      >
-                        {appliedKit ? "Applied" : "Use this logo & colors"}
-                      </Button>
                     </div>
                   ) : null}
 
                   <h4 className="mb-2 mt-6 text-xs font-bold uppercase tracking-wide text-ink-400">
-                    Or pick your palette and logo manually
+                    Pick your palette — tap any color to toggle it
                   </h4>
                   <div className="mb-4 flex flex-wrap gap-3">
-                    {PRESET_COLORS.map((hex) => (
-                      <button
-                        key={hex}
-                        type="button"
-                        aria-pressed={colors.includes(hex)}
-                        aria-label={`Toggle color ${hex}`}
-                        onClick={() => toggleColor(hex)}
-                        className={
-                          "flex flex-col items-center gap-1.5 rounded-2xl border-2 p-1 " +
-                          (colors.includes(hex) ? "border-brand-600" : "border-transparent")
-                        }
-                      >
-                        <span
-                          className="block h-[62px] w-[62px] rounded-[10px] border border-black/5"
-                          style={{ backgroundColor: hex }}
-                        />
-                        <span className="font-mono text-[11px] text-ink-500">{hex}</span>
-                      </button>
-                    ))}
+                    {Array.from(new Set([...extractedKit?.colors ?? [], ...PRESET_COLORS])).map((hex) => {
+                      const isFound = extractedKit?.colors.includes(hex) ?? false;
+                      const isSelected = colors.includes(hex);
+                      return (
+                        <motion.button
+                          key={hex}
+                          type="button"
+                          aria-pressed={isSelected}
+                          aria-label={`Toggle color ${hex}`}
+                          onClick={() => toggleColor(hex)}
+                          whileTap={{ scale: 0.93 }}
+                          animate={{ scale: isSelected ? 1.04 : 1 }}
+                          transition={{ type: "spring", stiffness: 500, damping: 25 }}
+                          className={
+                            "relative flex flex-col items-center gap-1.5 rounded-2xl border-2 p-1 " +
+                            (isSelected ? "border-brand-600" : "border-transparent hover:border-line")
+                          }
+                        >
+                          {isFound && (
+                            <span className="absolute -right-1 -top-1 rounded-full bg-brand-600 px-1.5 py-[1px] text-[9px] font-bold text-white shadow-sm">
+                              found
+                            </span>
+                          )}
+                          <span
+                            className="relative flex h-[62px] w-[62px] items-center justify-center rounded-[10px] border border-black/5"
+                            style={{ backgroundColor: hex }}
+                          >
+                            {isSelected && (
+                              <motion.span
+                                initial={{ scale: 0, opacity: 0 }}
+                                animate={{ scale: 1, opacity: 1 }}
+                                transition={{ type: "spring", stiffness: 600, damping: 20 }}
+                                className="flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-xs font-bold text-brand-700 shadow-sm"
+                              >
+                                ✓
+                              </motion.span>
+                            )}
+                          </span>
+                          <span className="font-mono text-[11px] text-ink-500">{hex}</span>
+                        </motion.button>
+                      );
+                    })}
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <label className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-[13px] border-[1.5px] border-dashed border-ink-100 bg-canvas p-4 text-center">
