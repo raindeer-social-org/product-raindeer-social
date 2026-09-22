@@ -197,3 +197,34 @@ half is independent and can land anytime.**
     above (user asked for "the BEST UI and UX" broadly, not just this
     round's specific fixes) — worth a dedicated follow-up pass once
     Supabase is back and uploads can be tested end-to-end.
+- **2026-09-22 (same day, follow-up)** — User feedback on the shipped UI:
+  "only 10% what i wanted" — too plain, not enough motion, layout not
+  "professional." Explicitly asked for a half-screen "cute 3D interactive
+  robot" representing Aarav, reacting live to what he's doing, and to skip
+  prototyping and redesign the real pages directly. Shipped:
+  - **`aarav-companion.tsx`** (new) — a CSS/SVG mascot (no 3D engine/model;
+    this repo has no Three.js dep and one isn't worth adding for a single
+    character) animated with Framer Motion: gradient-shaded rounded body,
+    glowing pulsing antenna, a breathing float + grounded shadow for a
+    "dimensional" feel, and 5 moods (`idle`/`reading`/`thinking`/
+    `listening`/`happy`) that change its eyes, add orbiting "thought"
+    particles, or a pulse ring — driven by real page state, not decorative.
+  - **`interview-split-layout.tsx`** (new) — a two-pane shell (mascot +
+    live caption on a dark gradient left rail, step content on the right),
+    replacing the old full-bleed centered-card layout across every stage
+    (questions/dynamic/assets/capstone/connect). Mirrors the design
+    language of `signup/auth-split-layout.tsx` (which explicitly opted the
+    old interview *out* of the split treatment — this reverses that) but
+    with a reactive mascot instead of a static agent roster.
+  - Real integration, not just decoration: mood/caption are wired to
+    `isScraping`/`scrapeDone` (idle → reading, live scrape-log line as the
+    caption → happy), `isDynamicLoading`/`isFinishingInterview` (thinking),
+    and a new `onVoiceActivity` callback threaded from
+    `dynamic-question-card.tsx`'s `DynamicVoiceAnswer` up through
+    `DynamicQuestionCard` to `page.tsx` (listening, while a dynamic
+    question's mic is actively recording).
+  - Verified live end-to-end via Chrome (real scrape against
+    `linear.app`, real color extraction, real mood transitions
+    idle→reading→happy and →thinking) — not just a visual read of the
+    code. All 143 frontend tests + tsc + lint stay green; one test updated
+    for the "ASKING SOMETHING NEW" badge moving into the rail's stepLabel.
