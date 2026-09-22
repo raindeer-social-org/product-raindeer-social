@@ -45,18 +45,19 @@ function BrandMemoryTags({ tags }: { tags: string[] }) {
   );
 }
 
-// The interview's shell — follows the user's own wireframe
-// (Images/aarav UI.png) on large screens: the outer page itself never
-// scrolls, the question content scrolls independently on the left, and
-// Aarav's companion sits fixed in a panel on the right so it's always in
-// view. Below the `lg` breakpoint this used to just `hidden` the entire
-// companion panel — a real bug, not a deliberate mobile design: on any
-// narrower window (a non-maximized laptop browser, a real phone) the whole
-// mascot/gradient/Brand-Memory experience silently vanished and what was
-// left was indistinguishable from the plain form this redesign replaced.
-// Recomposed instead of hidden: a compact companion bar sits above the
-// content and the whole page scrolls normally, matching how a real mobile
-// onboarding flow should behave.
+// The interview's shell — a true half/half split on large screens (direct
+// feedback: a fixed 400px side strip read as "tiny" on a real monitor —
+// Aarav's half must carry equal visual weight to the question half, not
+// play second fiddle to it), question content scrolling independently on
+// one side, Aarav's companion centered and fixed on the other so it's
+// always in view. Below the `lg` breakpoint this used to just `hidden` the
+// entire companion panel — a real bug, not a deliberate mobile design: on
+// any narrower window (a non-maximized laptop browser, a real phone) the
+// whole mascot/gradient/Brand-Memory experience silently vanished and what
+// was left was indistinguishable from the plain form this redesign
+// replaced. Recomposed instead of hidden: a compact companion bar sits
+// above the content and the whole page scrolls normally, matching how a
+// real mobile onboarding flow should behave.
 export function InterviewShell({
   mood,
   caption,
@@ -74,7 +75,7 @@ export function InterviewShell({
   children: ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen flex-col bg-[#F4F6FE] lg:grid lg:h-screen lg:grid-cols-[minmax(0,1fr)_400px] lg:overflow-hidden">
+    <div className="flex min-h-screen flex-col bg-[#F4F6FE] lg:grid lg:h-screen lg:grid-cols-2 lg:overflow-hidden">
       {/* companion panel — a compact bar above the content below `lg`,
       a fixed no-scroll side column at `lg` and up */}
       <div className="relative order-first flex shrink-0 flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-[#EEF2FF] via-[#F3EEFF] to-[#E9F3FF] px-6 py-7 lg:order-last lg:h-full lg:py-0">
