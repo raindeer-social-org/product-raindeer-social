@@ -1,8 +1,49 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { AaravCompanion, type AaravMood } from "./aarav-companion";
+
+// A real fact Aarav has collected, not a decorative placeholder — every tag
+// rendered here traces back to something the brand actually answered (see
+// page.tsx's addMemoryTag). Shows only the last few so it never turns into
+// a wall of text; it's meant to read as "Aarav is building a profile as we
+// talk", not as an audit log.
+const MAX_VISIBLE_MEMORY_TAGS = 6;
+
+function BrandMemoryTags({ tags }: { tags: string[] }) {
+  if (tags.length === 0) return null;
+  const visible = tags.slice(-MAX_VISIBLE_MEMORY_TAGS);
+  const hiddenCount = tags.length - visible.length;
+
+  return (
+    <div className="mt-7 flex w-full max-w-[280px] flex-col items-center gap-2">
+      <span className="text-[10px] font-bold uppercase tracking-[.14em] text-ink-300">Aarav is learning</span>
+      <div className="flex flex-wrap items-center justify-center gap-1.5">
+        {hiddenCount > 0 ? (
+          <span className="rounded-full border border-line-soft bg-white/70 px-2.5 py-1 text-[11px] font-semibold text-ink-300">
+            +{hiddenCount} more
+          </span>
+        ) : null}
+        <AnimatePresence initial={false}>
+          {visible.map((tag) => (
+            <motion.span
+              key={tag}
+              layout
+              initial={{ opacity: 0, y: 8, scale: 0.85 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.85 }}
+              transition={{ type: "spring", stiffness: 420, damping: 28 }}
+              className="rounded-full border border-white/80 bg-white/80 px-2.5 py-1 text-[11px] font-semibold text-ink-600 shadow-sm backdrop-blur-sm"
+            >
+              {tag}
+            </motion.span>
+          ))}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
 
 // The interview's shell — follows the user's own wireframe
 // (Images/aarav UI.png) exactly: the outer page itself never scrolls
@@ -15,11 +56,16 @@ export function InterviewShell({
   mood,
   caption,
   stepLabel,
+  memoryTags = [],
   children,
 }: {
   mood: AaravMood;
   caption?: string | null;
   stepLabel: string;
+  /** Real collected facts, rendered as small floating tags beside Aarav —
+   * see BrandMemoryTags above. Optional: stages with nothing collected yet
+   * simply render none. */
+  memoryTags?: string[];
   children: ReactNode;
 }) {
   return (
@@ -61,8 +107,9 @@ export function InterviewShell({
           className="pointer-events-none absolute -bottom-28 -left-16 h-[380px] w-[380px] rounded-full opacity-50 blur-[90px]"
           style={{ background: "radial-gradient(circle, rgba(27,77,255,.32), transparent 65%)" }}
         />
-        <div className="relative">
+        <div className="relative flex flex-col items-center">
           <AaravCompanion mood={mood} caption={caption} size="lg" dark={false} />
+          <BrandMemoryTags tags={memoryTags} />
         </div>
       </div>
     </div>

@@ -254,10 +254,58 @@ half is independent and can land anytime.**
      load (asking about Linear's actual industries/competitors/team size —
      good end-to-end proof the whole pipeline, not just the UI, works).
      143/143 tests, tsc, lint all green throughout.
-  - **Note:** GitHub Actions did not pick up two consecutive pushes to PR
-    #165 for an extended period (branch ref updated instantly per the Git
-    Data API, but the PR object itself stayed stale — `mergeable_state:
-    "unknown"`) — flagged to the user as a possible GitHub-side stuck
-    state on PR #165 specifically, not a code issue. Worth checking
-    `gh pr view 165` fresh next session if this round's pushes show the
-    same symptom.
+  - **Note (resolved):** GitHub Actions didn't pick up pushes to PR #165 —
+    root cause found: **PR #165 had already auto-merged** (right at commit
+    `296d1eb`, the moment its CI went green) partway through this session,
+    so every commit pushed afterward landed on a dead, already-merged
+    branch and silently never reached `main`. Fixed by opening #168,
+    cherry-picking the 3 orphaned commits onto a fresh branch off `main`,
+    and opening **PR #169** — CI dispatched normally there, confirming the
+    stuck state was specific to the already-closed PR #165, not a repo
+    problem. **Lesson for next time:** if pushes to an open PR stop
+    triggering CI, check `gh pr view <N> --json state,mergedAt` first —
+    don't assume it's a GitHub outage.
+- **2026-09-22 (same day, flagship redesign brief)** — User sent a large,
+  detailed creative brief asking for a full "flagship" onboarding redesign
+  (state machine, one-question-at-a-time flow, "Brand Memory" system,
+  Brand Snapshot payoff, image-analysis moment, full mobile recompose,
+  accessibility audit). Too large to build literally end-to-end in one
+  pass without becoming an unreviewable wall of code — scoped down to the
+  highest-leverage, honest subset and said so explicitly up front rather
+  than silently dropping requirements. Shipped on top of PR #169's branch:
+  - **Real state machine, not a mood grab-bag** — `aarav-companion.tsx`'s
+    `AaravMood` extended with `error` (CONFUSED — apologetic amber-tinted
+    worried eyes + head shake, triggered alongside every existing
+    `pushToast(..., "error")` call via a new `flashError()` helper) and
+    `goodbye` (a wave/bow on "Enter Raindeer", with a real ~650ms visible
+    beat before navigating — previously instant).
+  - **One question at a time.** The dynamic phase used to dump a whole
+    page of Aarav-generated questions on screen together; now
+    `dynamicQuestionIndex` walks through them one at a time client-side
+    (Next/Back, no extra backend calls until the page's last question),
+    with a cinematic slide transition and a `01`/`02`-style counter + thin
+    animated progress line that asymptotes toward "almost there" rather
+    than ever faking a real total (the actual question count isn't known
+    until Aarav says done).
+  - **Brand Memory** — `interview-shell.tsx` gained a `memoryTags` prop:
+    small pill tags that fly in next to Aarav as real facts land (colors
+    picked, logo applied, each dynamic answer's actual value) via
+    `page.tsx`'s `addMemoryTag()`. Every tag traces back to real collected
+    data — nothing decorative or invented.
+  - **Brand Snapshot payoff** — the capstone screen got an eyebrow label
+    + reveal animation wrapper (kept `BrandIdentityCapstone`'s internals
+    and button text untouched so the existing edit-and-save test still
+    passes).
+  - Micro-interactions: hover lift added to `ChipButton` and the palette
+    swatches (spring `whileHover`/`whileTap`); left the shared `Button`
+    primitive alone since it's used app-wide, out of scope for an
+    onboarding-only pass.
+  - **Explicitly deferred, not faked:** the image-"scanning" analysis
+    moment (no real vision analysis exists on uploaded assets — didn't
+    fabricate labels claiming otherwise) and a full mobile-layout
+    redesign pass (kept functional, didn't redesign it this round).
+  - Added 2 new tests (one-question-at-a-time Next/Back + memory tags)
+    and updated the "Enter Raindeer" test for the new goodbye delay —
+    145/145 frontend tests, tsc, lint all green. Verified live in Chrome
+    end-to-end against a real site again (fresh signup, real scrape, real
+    multi-question dynamic page, watched memory tags fly in live).

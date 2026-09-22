@@ -206,7 +206,9 @@ describe("OnboardingInterviewPage", () => {
 
     expect(await screen.findByText("Connect where you publish")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Enter Raindeer" }));
-    expect(push).toHaveBeenCalledWith("/");
+    // A brief GOODBYE beat plays before the actual navigation — see
+    // page.tsx's handleEnterApp.
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/"));
   });
 
   // --- Adaptive, LLM-generated follow-up questions (Issue #153) ---
@@ -256,6 +258,91 @@ describe("OnboardingInterviewPage", () => {
       ]);
     });
     expect(await screen.findByText(ASSETS_TITLE)).toBeInTheDocument();
+  });
+
+  it("asks a page's questions one at a time, with Next/Back, and only submits the whole page once the last one is answered", async () => {
+    const user = userEvent.setup();
+    const questions = [
+      {
+        id: "sector",
+        type: "chips" as const,
+        title: "Which sectors does LexStart serve?",
+        sub: null,
+        options: ["Legal", "Fintech"],
+      },
+      {
+        id: "size",
+        type: "chips" as const,
+        title: "What size are LexStart's customers?",
+        sub: null,
+        options: ["SMB", "Enterprise"],
+      },
+    ];
+    fetchNextOnboardingQuestionsMock.mockResolvedValueOnce({ done: false, page_index: 1, questions });
+    fetchNextOnboardingQuestionsMock.mockResolvedValueOnce({ done: true, page_index: 0, questions: [] });
+
+    renderPage();
+    await skipFixedPage(user);
+
+    // First question only — the second isn't shown yet, and there's no
+    // page-level submit button since a page hasn't been fully answered.
+    expect(await screen.findByText("Which sectors does LexStart serve?")).toBeInTheDocument();
+    expect(screen.queryByText("What size are LexStart's customers?")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Legal" }));
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    // Moved to question 2 client-side — no backend call yet.
+    expect(await screen.findByText("What size are LexStart's customers?")).toBeInTheDocument();
+    expect(screen.queryByText("Which sectors does LexStart serve?")).not.toBeInTheDocument();
+    expect(fetchNextOnboardingQuestionsMock).toHaveBeenCalledTimes(1);
+
+    // Back returns to question 1 with its answer still selected.
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(await screen.findByText("Which sectors does LexStart serve?")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Legal" })).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText("What size are LexStart's customers?");
+    await user.click(screen.getByRole("button", { name: "Enterprise" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() => {
+      expect(fetchNextOnboardingQuestionsMock).toHaveBeenLastCalledWith("test-token", "brand-1", 1, [
+        { question: questions[0], answer: ["Legal"] },
+        { question: questions[1], answer: ["Enterprise"] },
+      ]);
+    });
+    expect(await screen.findByText(ASSETS_TITLE)).toBeInTheDocument();
+  });
+
+  it("shows what Aarav has learned as brand memory tags as real answers come in", async () => {
+    const user = userEvent.setup();
+    fetchNextOnboardingQuestionsMock.mockResolvedValueOnce({
+      done: false,
+      page_index: 1,
+      questions: [
+        { id: "sector", type: "chips", title: "Which sectors does LexStart serve?", sub: null, options: ["Legal tech"] },
+      ],
+    });
+    fetchNextOnboardingQuestionsMock.mockResolvedValueOnce({ done: true, page_index: 0, questions: [] });
+
+    renderPage();
+    await screen.findByText(SCRAPE_TITLE);
+    await user.click(screen.getByRole("button", { name: "Toggle color #1B4DFF" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    await screen.findByText("Which sectors does LexStart serve?");
+    // The fixed page's color pick is already remembered.
+    expect(await screen.findByText("Colors • 1 picked")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Legal tech" }));
+    // Only question on this page — the submit button reads "Continue", not
+    // "Next" (matches the existing single-question test's expectation).
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(await screen.findByText("Legal tech")).toBeInTheDocument();
   });
 
   it("falls back to typing on a dynamic text question when the mic can't be used (no MediaRecorder in this environment)", async () => {

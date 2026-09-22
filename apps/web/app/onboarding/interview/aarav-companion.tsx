@@ -15,7 +15,14 @@
 
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 
-export type AaravMood = "idle" | "reading" | "thinking" | "listening" | "happy";
+// A real, small state machine — not a grab-bag of animation flags. Every
+// value here maps to one distinct thing Aarav is actually doing (see
+// page.tsx's mood computation for each stage): CURIOUS/reading while
+// scraping a site, THINKING while an LLM call is in flight, LISTENING while
+// a voice answer records, CONFUSED (error) when something just failed,
+// SUCCESS (happy) when a step completes, GOODBYE on the very last "enter
+// the app" moment. idle is the resting state between all of those.
+export type AaravMood = "idle" | "reading" | "thinking" | "listening" | "happy" | "error" | "goodbye";
 
 const DEFAULT_CAPTION: Record<AaravMood, string> = {
   idle: "Ready when you are.",
@@ -23,16 +30,36 @@ const DEFAULT_CAPTION: Record<AaravMood, string> = {
   thinking: "Thinking of what to ask next…",
   listening: "Listening…",
   happy: "Nice — got it.",
+  error: "Hmm, that didn't work — try again?",
+  goodbye: "See you inside!",
 };
 
 function Eye({ mood }: { mood: AaravMood }) {
   const prefersReducedMotion = useReducedMotion();
 
-  if (mood === "happy") {
+  if (mood === "happy" || mood === "goodbye") {
     return (
       <svg width="16" height="12" viewBox="0 0 16 12" fill="none" aria-hidden="true">
         <path d="M1 10C3.4 2 12.6 2 15 10" stroke="#BFE0FF" strokeWidth="2.8" strokeLinecap="round" />
       </svg>
+    );
+  }
+
+  if (mood === "error") {
+    // A small worried tilt rather than a harsh "X" — apologetic, not alarming.
+    return (
+      <motion.svg
+        width="16"
+        height="10"
+        viewBox="0 0 16 10"
+        fill="none"
+        aria-hidden="true"
+        animate={prefersReducedMotion ? {} : { x: [-1.5, 1.5, -1.5] }}
+        transition={{ duration: 0.5, repeat: Infinity, ease: "easeInOut" }}
+      >
+        <path d="M1 3C3.4 1 5.6 1 8 3" stroke="#BFE0FF" strokeWidth="2.4" strokeLinecap="round" />
+        <path d="M8 3C10.4 1 12.6 1 15 3" stroke="#BFE0FF" strokeWidth="2.4" strokeLinecap="round" />
+      </motion.svg>
     );
   }
 
@@ -120,19 +147,28 @@ export function AaravCompanion({
   const headSwivel =
     mood === "idle"
       ? { rotateY: [0, 30, 0, -30, 0] }
-      : mood === "happy"
+      : mood === "happy" || mood === "goodbye"
         ? { rotateY: [0, 16, -16, 0] }
-        : { rotateY: [0, 14, 0, -14, 0] };
-  const headSwivelDuration = mood === "idle" ? 6.5 : mood === "happy" ? 0.9 : mood === "thinking" ? 3.2 : 4.5;
+        : mood === "error"
+          ? { rotateY: [0, -10, 10, -10, 0] } // a small "no, that's not right" shake
+          : { rotateY: [0, 14, 0, -14, 0] };
+  const headSwivelDuration =
+    mood === "idle" ? 6.5 : mood === "happy" || mood === "goodbye" ? 0.9 : mood === "error" ? 0.5 : mood === "thinking" ? 3.2 : 4.5;
 
   return (
     <div className="relative flex flex-col items-center justify-center">
       <div className="relative flex items-center justify-center" style={{ width: dim * 1.5, height: dim * 1.3 }}>
-        {/* ambient glow */}
+        {/* ambient glow — warms to amber on error, a gentle "oops" rather
+        than an alarming red */}
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 rounded-full opacity-80 blur-3xl"
-          style={{ background: "radial-gradient(circle at 50% 42%, rgba(143,196,255,.5), transparent 65%)" }}
+          style={{
+            background:
+              mood === "error"
+                ? "radial-gradient(circle at 50% 42%, rgba(255,196,107,.45), transparent 65%)"
+                : "radial-gradient(circle at 50% 42%, rgba(143,196,255,.5), transparent 65%)",
+          }}
         />
 
         {/* slow-rotating conic halo ring — a "sci-fi tech" flourish that
@@ -194,7 +230,11 @@ export function AaravCompanion({
           className="absolute bottom-4 rounded-full bg-ink-950/15 blur-[6px]"
           style={{ width: dim * 0.46, height: dim * 0.08 }}
           animate={prefersReducedMotion ? {} : { scaleX: [1, 0.82, 1], opacity: [0.35, 0.2, 0.35] }}
-          transition={{ duration: mood === "happy" ? 0.9 : 3.2, repeat: Infinity, ease: "easeInOut" }}
+          transition={{
+            duration: mood === "happy" || mood === "goodbye" ? 0.9 : mood === "error" ? 0.5 : 3.2,
+            repeat: Infinity,
+            ease: "easeInOut",
+          }}
         />
 
         {/* whole body — float/bob ("moving") */}
@@ -206,12 +246,17 @@ export function AaravCompanion({
               ? {}
               : mood === "happy"
                 ? { y: [0, -18, 0], rotate: [0, -3, 3, 0] }
-                : mood === "listening"
-                  ? { y: [0, -6, 0] }
-                  : { y: [0, -9, 0] }
+                : mood === "goodbye"
+                  ? { y: [0, -14, 0], rotate: [0, 8, -4, 0] } // a little wave/bow
+                  : mood === "error"
+                    ? { y: [0, 3, 0], rotate: [0, -2, 2, 0] } // a small apologetic droop
+                    : mood === "listening"
+                      ? { y: [0, -6, 0] }
+                      : { y: [0, -9, 0] }
           }
           transition={{
-            duration: mood === "happy" ? 0.85 : mood === "listening" ? 1.1 : 3.2,
+            duration:
+              mood === "happy" || mood === "goodbye" ? 0.85 : mood === "error" ? 0.5 : mood === "listening" ? 1.1 : 3.2,
             repeat: Infinity,
             ease: "easeInOut",
           }}
