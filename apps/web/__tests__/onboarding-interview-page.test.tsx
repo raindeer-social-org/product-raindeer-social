@@ -13,10 +13,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 const fetchBrandsMock = vi.fn();
-const fetchOnboardingMock = vi.fn();
 const streamOnboardingResearchMock = vi.fn();
 const updateBrandMock = vi.fn();
-const upsertOnboardingMock = vi.fn();
 const completeOnboardingMock = vi.fn();
 const uploadBrandLogoMock = vi.fn();
 const fetchSocialAccountsMock = vi.fn();
@@ -32,10 +30,8 @@ vi.mock("@/lib/api", async () => {
   return {
     ...actual,
     fetchBrands: (...args: unknown[]) => fetchBrandsMock(...args),
-    fetchOnboarding: (...args: unknown[]) => fetchOnboardingMock(...args),
     streamOnboardingResearch: (...args: unknown[]) => streamOnboardingResearchMock(...args),
     updateBrand: (...args: unknown[]) => updateBrandMock(...args),
-    upsertOnboarding: (...args: unknown[]) => upsertOnboardingMock(...args),
     completeOnboarding: (...args: unknown[]) => completeOnboardingMock(...args),
     uploadBrandLogo: (...args: unknown[]) => uploadBrandLogoMock(...args),
     fetchSocialAccounts: (...args: unknown[]) => fetchSocialAccountsMock(...args),
@@ -64,7 +60,6 @@ const BRAND = {
 };
 
 const SCRAPE_TITLE = "Let's confirm your website & brand colors";
-const ESSENTIALS_TITLE = "The essentials";
 const ASSETS_TITLE = "Drop in anything that shows your brand at its best";
 
 function renderPage() {
@@ -79,14 +74,17 @@ function renderPage() {
   );
 }
 
+async function skipFixedPage(user: ReturnType<typeof userEvent.setup>) {
+  await screen.findByText(SCRAPE_TITLE);
+  await user.click(screen.getByText("Skip"));
+}
+
 describe("OnboardingInterviewPage", () => {
   beforeEach(() => {
     push.mockClear();
     fetchBrandsMock.mockReset();
-    fetchOnboardingMock.mockReset();
     streamOnboardingResearchMock.mockReset();
     updateBrandMock.mockReset();
-    upsertOnboardingMock.mockReset();
     completeOnboardingMock.mockReset();
     uploadBrandLogoMock.mockReset();
     fetchSocialAccountsMock.mockReset();
@@ -101,15 +99,13 @@ describe("OnboardingInterviewPage", () => {
     window.localStorage.setItem("raindeer.auth.token", "test-token");
 
     fetchBrandsMock.mockResolvedValue([BRAND]);
-    fetchOnboardingMock.mockResolvedValue(null);
     fetchSocialAccountsMock.mockResolvedValue([]);
     updateBrandMock.mockResolvedValue(BRAND);
-    upsertOnboardingMock.mockResolvedValue({});
     completeOnboardingMock.mockResolvedValue({});
     fetchOnboardingAssetsMock.mockResolvedValue([]);
     // Default: Aarav has nothing more to ask — most tests only care about
-    // the 2 fixed pages, so the dynamic phase should fall straight through
-    // to the (optional) asset stage unless a test overrides this.
+    // the one fixed page, so the dynamic phase should fall straight
+    // through to the (optional) asset stage unless a test overrides this.
     fetchNextOnboardingQuestionsMock.mockResolvedValue({ done: true, page_index: 0, questions: [] });
     // Default: run-agent produces no usable brand_report, so
     // finishInterview() skips the capstone screen and falls straight
@@ -130,9 +126,9 @@ describe("OnboardingInterviewPage", () => {
     );
   });
 
-  // --- Exactly 2 fixed pages before Aarav takes over (issue #162) ---
+  // --- One fixed page before Aarav takes over (issue #164) ---
 
-  it("auto-starts the research stream on the first (combined website+colors) question and renders real log lines", async () => {
+  it("auto-starts the research stream on the fixed website+colors question and renders real log lines", async () => {
     renderPage();
 
     expect(await screen.findByText(SCRAPE_TITLE)).toBeInTheDocument();
@@ -141,7 +137,37 @@ describe("OnboardingInterviewPage", () => {
     expect(await screen.findByText(/Found: LexStart raises seed round/)).toBeInTheDocument();
   });
 
-  it("saves manually-picked brand colors via updateBrand when advancing past the combined page", async () => {
+  it("surfaces social links found on the scraped site as clickable links", async () => {
+    streamOnboardingResearchMock.mockImplementation(
+      async (
+        _token: string,
+        _brandId: string,
+        onEvent: (event: ResearchStreamEvent) => void
+      ) => {
+        onEvent({
+          event: "extracted",
+          data: {
+            logo_url: "https://storage.test/logo.png",
+            colors: ["#1B4DFF"],
+            summary: "LexStart sells legal workflow software.",
+            social_links: { instagram: "https://instagram.com/lexstart", linkedin: "https://linkedin.com/company/lexstart" },
+          },
+        });
+        onEvent({ event: "done", data: { count: 0 } });
+      }
+    );
+    renderPage();
+
+    await screen.findByText(SCRAPE_TITLE);
+    const instagramLink = await screen.findByRole("link", { name: "Instagram" });
+    expect(instagramLink).toHaveAttribute("href", "https://instagram.com/lexstart");
+    expect(screen.getByRole("link", { name: "Linkedin" })).toHaveAttribute(
+      "href",
+      "https://linkedin.com/company/lexstart"
+    );
+  });
+
+  it("saves manually-picked brand colors via updateBrand when advancing past the fixed page", async () => {
     const user = userEvent.setup();
     renderPage();
 
@@ -152,44 +178,7 @@ describe("OnboardingInterviewPage", () => {
     await waitFor(() => {
       expect(updateBrandMock).toHaveBeenCalledWith("test-token", "brand-1", { colors: ["#1B4DFF"] });
     });
-    expect(await screen.findByText(ESSENTIALS_TITLE)).toBeInTheDocument();
-  });
-
-  it("saves all 5 essentials fields in a single upsertOnboarding call", async () => {
-    const user = userEvent.setup();
-    renderPage();
-
-    await screen.findByText(SCRAPE_TITLE);
-    await user.click(screen.getByRole("button", { name: "Continue" })); // -> essentials
-
-    await screen.findByText(ESSENTIALS_TITLE);
-    await user.click(screen.getByRole("button", { name: "Bold" }));
-    await user.click(screen.getByRole("button", { name: "Playful" }));
-    await user.click(screen.getByRole("button", { name: "Brand awareness" }));
-    await user.click(screen.getByRole("button", { name: "Prefer typing? Answer in text instead" }));
-    await user.type(
-      screen.getByPlaceholderText("Type your answer — Aarav reads tone, not just words."),
-      "Small business owners who hate spreadsheets."
-    );
-    await user.type(
-      screen.getByPlaceholderText("The short version — Aarav will ask about the details himself."),
-      "Accounting software."
-    );
-    await user.type(
-      screen.getByPlaceholderText("Comma-separated is fine — Ved researches how you compare."),
-      "QuickBooks, Xero"
-    );
-    await user.click(screen.getByRole("button", { name: "Hand off to Aarav" }));
-
-    await waitFor(() => {
-      expect(upsertOnboardingMock).toHaveBeenCalledWith("test-token", "brand-1", {
-        voice: "Bold, Playful",
-        goals: ["Brand awareness"],
-        audience: "Small business owners who hate spreadsheets.",
-        product_catalog: { description: "Accounting software." },
-        competitors: ["QuickBooks", "Xero"],
-      });
-    });
+    expect(await screen.findByText(ASSETS_TITLE)).toBeInTheDocument();
   });
 
   it("jumps straight to the connect step via 'Skip to social connections'", async () => {
@@ -203,14 +192,11 @@ describe("OnboardingInterviewPage", () => {
     await waitFor(() => expect(completeOnboardingMock).toHaveBeenCalledWith("test-token", "brand-1"));
   });
 
-  it("reaches the optional asset stage after the 2 fixed pages, then connect after that", async () => {
+  it("reaches the optional asset stage after the fixed page, then connect after that", async () => {
     const user = userEvent.setup();
     renderPage();
 
-    for (const title of [SCRAPE_TITLE, ESSENTIALS_TITLE]) {
-      await screen.findByText(title);
-      await user.click(screen.getByText("Skip"));
-    }
+    await skipFixedPage(user);
 
     // Dynamic phase (mocked done:true) falls straight through to the
     // optional asset stage — not another question, so it isn't gated
@@ -225,16 +211,7 @@ describe("OnboardingInterviewPage", () => {
 
   // --- Adaptive, LLM-generated follow-up questions (Issue #153) ---
 
-  const FIXED_TITLES = [SCRAPE_TITLE, ESSENTIALS_TITLE];
-
-  async function skipFixedPages(user: ReturnType<typeof userEvent.setup>) {
-    for (const title of FIXED_TITLES) {
-      await screen.findByText(title);
-      await user.click(screen.getByText("Skip"));
-    }
-  }
-
-  it("renders an Aarav-generated question after just the 2 fixed pages and submits the answer", async () => {
+  it("renders an Aarav-generated question after the fixed page and submits the typed answer", async () => {
     const user = userEvent.setup();
     fetchNextOnboardingQuestionsMock.mockResolvedValueOnce({
       done: false,
@@ -252,15 +229,16 @@ describe("OnboardingInterviewPage", () => {
     fetchNextOnboardingQuestionsMock.mockResolvedValueOnce({ done: true, page_index: 0, questions: [] });
 
     renderPage();
-    await skipFixedPages(user);
+    await skipFixedPage(user);
 
     expect(await screen.findByText("What tools does LexStart integrate with?")).toBeInTheDocument();
     expect(screen.getByText("ASKING SOMETHING NEW")).toBeInTheDocument();
 
-    await user.type(
-      screen.getByPlaceholderText("Type your answer — Aarav reads tone, not just words."),
-      "QuickBooks and Stripe"
-    );
+    // Every free-text dynamic question is voice-first now (issue #164) —
+    // typing means tapping "Prefer typing?" first, same as a "voice"-typed
+    // question.
+    await user.click(screen.getByRole("button", { name: "Prefer typing?" }));
+    await user.type(screen.getByPlaceholderText("Type your answer."), "QuickBooks and Stripe");
     await user.click(screen.getByRole("button", { name: "Continue" }));
 
     await waitFor(() => {
@@ -280,16 +258,57 @@ describe("OnboardingInterviewPage", () => {
     expect(await screen.findByText(ASSETS_TITLE)).toBeInTheDocument();
   });
 
+  it("falls back to typing on a dynamic text question when the mic can't be used (no MediaRecorder in this environment)", async () => {
+    const user = userEvent.setup();
+    fetchNextOnboardingQuestionsMock.mockResolvedValueOnce({
+      done: false,
+      page_index: 1,
+      questions: [
+        {
+          id: "audience",
+          type: "text",
+          title: "Who are you actually trying to reach?",
+          sub: null,
+          options: null,
+        },
+      ],
+    });
+    fetchNextOnboardingQuestionsMock.mockResolvedValueOnce({ done: true, page_index: 0, questions: [] });
+
+    renderPage();
+    await skipFixedPage(user);
+
+    await screen.findByText("Who are you actually trying to reach?");
+    await user.click(screen.getByRole("button", { name: "Start recording" }));
+
+    // jsdom has no MediaRecorder — startRecording must degrade to the
+    // typed fallback rather than leaving the question unanswerable.
+    const textarea = await screen.findByPlaceholderText("Type your answer.");
+    await user.type(textarea, "Small business owners who hate spreadsheets.");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() => {
+      expect(fetchNextOnboardingQuestionsMock).toHaveBeenLastCalledWith(
+        "test-token",
+        "brand-1",
+        1,
+        expect.arrayContaining([
+          expect.objectContaining({ answer: "Small business owners who hate spreadsheets." }),
+        ])
+      );
+    });
+  });
+
   it("goes straight to the asset stage when Aarav has nothing more to ask", async () => {
     const user = userEvent.setup();
     renderPage();
-    await skipFixedPages(user);
+    await skipFixedPage(user);
 
     await waitFor(() => expect(fetchNextOnboardingQuestionsMock).toHaveBeenCalledWith("test-token", "brand-1", 0, []));
     expect(await screen.findByText(ASSETS_TITLE)).toBeInTheDocument();
   });
 
-  // --- Optional asset library, now its own post-Aarav stage (issue #162) ---
+  // --- Optional asset library, its own post-Aarav stage (issue #162) ---
 
   it("uploads a real asset file on the asset stage and shows it as filled instead of a blank slot", async () => {
     const user = userEvent.setup();
@@ -303,7 +322,7 @@ describe("OnboardingInterviewPage", () => {
       created_at: "2026-01-01",
     });
     renderPage();
-    await skipFixedPages(user);
+    await skipFixedPage(user);
 
     expect(await screen.findByText(ASSETS_TITLE)).toBeInTheDocument();
     const file = new File(["guide"], "style-guide.pdf", { type: "application/pdf" });
@@ -321,7 +340,7 @@ describe("OnboardingInterviewPage", () => {
   // --- Editable brand-identity capstone (Issue #158) ---
 
   async function reachAssetStageAndContinue(user: ReturnType<typeof userEvent.setup>) {
-    await skipFixedPages(user);
+    await skipFixedPage(user);
     await screen.findByText(ASSETS_TITLE);
     await user.click(screen.getByRole("button", { name: "Continue" }));
   }
@@ -365,32 +384,5 @@ describe("OnboardingInterviewPage", () => {
     await reachAssetStageAndContinue(user);
 
     expect(await screen.findByText("Connect where you publish")).toBeInTheDocument();
-  });
-
-  // --- Real voice recording + free open-source transcription (Issue #144) ---
-
-  it("falls back to the text answer when the mic can't be used (no MediaRecorder in this environment)", async () => {
-    const user = userEvent.setup();
-    renderPage();
-
-    await screen.findByText(SCRAPE_TITLE);
-    await user.click(screen.getByRole("button", { name: "Continue" })); // -> essentials
-    await screen.findByText(ESSENTIALS_TITLE);
-
-    await user.click(screen.getByRole("button", { name: "Start recording" }));
-
-    // jsdom has no MediaRecorder — startRecording must degrade to the
-    // typed fallback rather than leaving the question unanswerable.
-    const textarea = await screen.findByPlaceholderText("Type your answer — Aarav reads tone, not just words.");
-    await user.type(textarea, "Small business owners who hate spreadsheets.");
-    await user.click(screen.getByRole("button", { name: "Hand off to Aarav" }));
-
-    await waitFor(() => {
-      expect(upsertOnboardingMock).toHaveBeenCalledWith(
-        "test-token",
-        "brand-1",
-        expect.objectContaining({ audience: "Small business owners who hate spreadsheets." })
-      );
-    });
   });
 });

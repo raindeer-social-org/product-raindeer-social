@@ -10,7 +10,12 @@ from apps.api.config.database import Base
 # Hard cap on how many AI-generated pages Aarav can ask, even if the LLM
 # never signals done — see packages/agents/onboarding/dynamic_questions.py.
 # Keeps the interview from running forever against a model that won't stop.
-MAX_DYNAMIC_PAGES = 4
+# Raised from 4 — the fixed "essentials" page (voice/audience/product/
+# competitors/goals) was removed and folded into this dynamic phase
+# instead, so Aarav now has real ground to cover that a fixed page used
+# to handle; generate_next_page's own done=True signal still lets a
+# well-understood brand finish in far fewer pages than this ceiling.
+MAX_DYNAMIC_PAGES = 10
 
 
 class OnboardingDynamicAnswer(Base):

@@ -48,12 +48,26 @@ voice-recording transcripts and uploaded assets (issue #144), each tied to a
 (`_synthesize_node`) turns `OnboardingResponse` + `OnboardingResearch` into
 `brand_report`, written onto `Brand.brand_report`.
 
-`packages/agents/onboarding/research_step.py` — **this is Tavily web
-*search* (snippets about the brand), not a scrape of the brand's own
-website/social pages.** No logo/color/content extraction from the brand's
-actual site happens anywhere in the codebase today. This is the biggest gap
-between what exists and what the user asked for on 2026-09-20 (see
-[[../aarav-agent/PLAN.md]]).
+`packages/agents/onboarding/research_step.py` — as of 2026-09-20 this was
+Tavily web *search* only (snippets about the brand), with no real scrape of
+the brand's own site. **That gap is closed as of issue #152/Phase A** (see
+[[../aarav-agent/PLAN.md]]'s progress log): `run_website_scrape` now
+actually fetches the brand's own site via `packages/integrations/webscrape/`
+(free `httpx`+BeautifulSoup+Pillow, no third-party API), distills it through
+an LLM summarization pass (never stores the raw scrape), extracts a
+logo/color-palette suggestion, and (as of #167) surfaces social profile
+links found on the page too — all onto `OnboardingResearch`. `search_brand_overview`
+in the same file is still the older Tavily-search path, kept separately for
+the live "public signals" log the interview shows before the real scrape
+runs.
+
+`apps/api/models/onboarding_dynamic_answer.py` — Aarav's own adaptive
+follow-up questions (issue #153/Phase B), generated one page at a time by an
+LLM call reading everything answered so far (fixed fields + scrape summary +
+prior dynamic pages). As of #167 this is where almost all of onboarding's
+real interview content lives — the old fixed questionnaire is down to a
+single page (confirm website + colors); `OnboardingResponse`'s structured
+fields are optional enrichment only, not a completion gate.
 
 ## Which agents actually read brand data (audited 2026-09-20)
 

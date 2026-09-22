@@ -823,7 +823,7 @@ export interface OnboardingVoiceAnswer {
   brand_id: string;
   question_id: string;
   transcript: string;
-  audio_url: string;
+  audio_url: string | null;
   language: string | null;
   duration_seconds: number | null;
   created_at: string;
@@ -939,6 +939,10 @@ export interface ExtractedBrandKit {
   logoUrl: string | null;
   colors: string[];
   summary: string | null;
+  // Platform -> profile URL found on the brand's own site (footer/header
+  // icons, "follow us" links) — real signal Aarav surfaces, not scraped
+  // further. See packages/integrations/webscrape's _find_social_links.
+  socialLinks: Record<string, string>;
 }
 
 // Reads the onboarding research-preview SSE stream (Issue #123's Aarav
