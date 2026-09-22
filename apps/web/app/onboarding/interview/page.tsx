@@ -27,14 +27,10 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { BrandIdentityCapstone } from "./brand-identity-capstone";
 import { SocialConnectionsPanel } from "@/app/social-accounts/social-connections-panel";
 import { DynamicQuestionCard } from "./dynamic-question-card";
+import { InterviewShell } from "./interview-shell";
+import type { AaravMood } from "./aarav-companion";
 
 const PRESET_COLORS = ["#1B4DFF", "#0A1633", "#0E7A4E", "#B46A00", "#6B32C9", "#C9295A"];
-
-// Mirrors apps/api/models/onboarding_dynamic_answer.py::MAX_DYNAMIC_PAGES —
-// shown to the user as "page N of up to this many", not enforced here (the
-// backend is the real cap; generate_next_page's done=True can end things
-// far sooner).
-const MAX_DYNAMIC_PAGES = 10;
 
 const UPLOAD_SLOTS: { slot: string; label: string }[] = [
   { slot: "product_photos", label: "Product photos" },
@@ -83,12 +79,36 @@ export default function OnboardingInterviewPage() {
   const [dynamicPageIndex, setDynamicPageIndex] = useState(0);
   const [dynamicQuestions, setDynamicQuestions] = useState<DynamicQuestion[]>([]);
   const [dynamicAnswers, setDynamicAnswers] = useState<Record<string, string | string[]>>({});
+  // Which question WITHIN the current page is on screen — Aarav asks one
+  // thing at a time, cinematically, rather than dumping a whole page of
+  // questions on the user at once. Resets to 0 every time a new page loads.
+  const [dynamicQuestionIndex, setDynamicQuestionIndex] = useState(0);
+  // Cumulative count across every dynamic question answered so far (not
+  // reset per page) — drives the "Question N" progress readout, since the
+  // real total isn't known in advance (Aarav decides when it's done).
+  const [answeredQuestionCount, setAnsweredQuestionCount] = useState(0);
   const [isDynamicLoading, setIsDynamicLoading] = useState(false);
   // Purely cosmetic: a free-tier LLM call generating several thoughtful,
   // specific multiple-choice questions can genuinely take a while — this
   // swaps the loading copy after a few seconds so a slow-but-working
   // response doesn't read as "stuck" during the wait.
   const [isDynamicLoadingSlow, setIsDynamicLoadingSlow] = useState(false);
+  // Drives the companion's "listening" mood while a dynamic question's mic
+  // is actively recording (see dynamic-question-card.tsx's onVoiceActivity)
+  // — real integration between the mascot and what Aarav is doing, not
+  // just decorative idle motion.
+  const [isVoiceActive, setIsVoiceActive] = useState(false);
+  // Real facts Aarav has collected, rendered as small floating tags next to
+  // him (see interview-shell.tsx's BrandMemoryTags) — every entry traces
+  // back to something actually answered, never decorative filler.
+  const [memoryTags, setMemoryTags] = useState<string[]>([]);
+  // Flips the companion to its CONFUSED/error state for a couple of
+  // seconds whenever something just failed — alongside the existing toast,
+  // not instead of it.
+  const [errorPulse, setErrorPulse] = useState(false);
+  // GOODBYE: a brief, visible beat before actually leaving the interview
+  // for the app — see handleEnterApp.
+  const [isLeaving, setIsLeaving] = useState(false);
 
   const [colors, setColors] = useState<string[]>([]);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
@@ -186,6 +206,7 @@ export default function OnboardingInterviewPage() {
         if (extractedColors.length > 0) {
           setColors((current) => Array.from(new Set([...current, ...extractedColors])));
         }
+        addMemoryTag("Website • scanned");
       } else if (event.event === "done") {
         setScrapeLog((current) => [
           ...current,
@@ -228,6 +249,22 @@ export default function OnboardingInterviewPage() {
     [scrapeDone, colors, assets]
   );
 
+  function addMemoryTag(tag: string | null | undefined) {
+    const trimmed = tag?.trim();
+    if (!trimmed) return;
+    setMemoryTags((current) => (current.includes(trimmed) ? current : [...current, trimmed]));
+  }
+
+  const errorPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function flashError() {
+    if (errorPulseTimerRef.current) clearTimeout(errorPulseTimerRef.current);
+    setErrorPulse(true);
+    errorPulseTimerRef.current = setTimeout(() => setErrorPulse(false), 2200);
+  }
+  useEffect(() => () => {
+    if (errorPulseTimerRef.current) clearTimeout(errorPulseTimerRef.current);
+  }, []);
+
   async function handleLogoChange(file: File | null) {
     if (!file || !token || !selectedBrandId) return;
     setIsUploadingLogo(true);
@@ -236,8 +273,10 @@ export default function OnboardingInterviewPage() {
       await refreshBrands();
       if (brand.colors) setColors(brand.colors);
       pushToast("Logo uploaded.", "success");
+      addMemoryTag("Logo • uploaded");
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Failed to upload logo", "error");
+      flashError();
     } finally {
       setIsUploadingLogo(false);
     }
@@ -262,8 +301,10 @@ export default function OnboardingInterviewPage() {
       await refreshBrands();
       setAppliedKit(true);
       pushToast("Applied the logo from your website.", "success");
+      addMemoryTag("Logo • from your site");
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Failed to apply the extracted logo", "error");
+      flashError();
     } finally {
       setIsApplyingKit(false);
     }
@@ -276,8 +317,10 @@ export default function OnboardingInterviewPage() {
       const asset = await uploadOnboardingAsset(token, selectedBrandId, slot, file);
       setAssets((current) => [...current.filter((a) => a.slot !== slot), asset]);
       pushToast("Uploaded.", "success");
+      addMemoryTag(`${UPLOAD_SLOTS.find((s) => s.slot === slot)?.label ?? "Asset"} • added`);
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Failed to upload file", "error");
+      flashError();
     } finally {
       setUploadingSlot(null);
     }
@@ -292,8 +335,10 @@ export default function OnboardingInterviewPage() {
     setIsSaving(true);
     try {
       await updateBrand(token, selectedBrandId, { colors });
+      addMemoryTag(`Colors • ${colors.length} picked`);
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Failed to save your answer", "error");
+      flashError();
     } finally {
       setIsSaving(false);
     }
@@ -301,6 +346,14 @@ export default function OnboardingInterviewPage() {
 
   function goToConnect() {
     setStage("connect");
+  }
+
+  // GOODBYE — a brief, visible beat (Aarav waves) before actually leaving
+  // for the app, rather than navigating away the instant the button is
+  // pressed with no acknowledgment at all.
+  function handleEnterApp() {
+    setIsLeaving(true);
+    setTimeout(() => router.push("/"), 650);
   }
 
   // Runs after the dynamic-questions phase reports done: marks onboarding
@@ -352,6 +405,7 @@ export default function OnboardingInterviewPage() {
       await refreshBrands();
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Failed to save your edits", "error");
+      flashError();
     } finally {
       setIsSavingCapstone(false);
     }
@@ -379,6 +433,7 @@ export default function OnboardingInterviewPage() {
         }
         setDynamicQuestions(result.questions);
         setDynamicAnswers({});
+        setDynamicQuestionIndex(0);
         setDynamicPageIndex(result.page_index);
       } catch (err) {
         pushToast(
@@ -412,12 +467,45 @@ export default function OnboardingInterviewPage() {
     setDynamicAnswers((current) => ({ ...current, [questionId]: value }));
   }
 
+  // A short, honest label for the Brand Memory tags — never invented, just
+  // a trimmed echo of what was actually answered.
+  function summarizeDynamicAnswer(answer: string | string[] | undefined): string | null {
+    if (!answer) return null;
+    if (Array.isArray(answer)) {
+      if (answer.length === 0) return null;
+      const shown = answer.slice(0, 2).join(", ");
+      return answer.length > 2 ? `${shown}…` : shown;
+    }
+    const trimmed = answer.trim();
+    if (!trimmed) return null;
+    return trimmed.length > 42 ? `${trimmed.slice(0, 39)}…` : trimmed;
+  }
+
   function handleDynamicContinue() {
     const answers: DynamicAnswerSubmit[] = dynamicQuestions.map((question) => ({
       question,
       answer: dynamicAnswers[question.id] ?? (question.type === "chips" ? [] : ""),
     }));
     loadDynamicPage(dynamicPageIndex, answers);
+  }
+
+  // Aarav asks one question at a time — "Next" only submits the whole page
+  // back to the backend once every question on it has been answered;
+  // before that it just moves the cinematic spotlight to the next question
+  // in the same page, already-loaded and client-side only.
+  function handleDynamicNext() {
+    const question = dynamicQuestions[dynamicQuestionIndex];
+    if (question) addMemoryTag(summarizeDynamicAnswer(dynamicAnswers[question.id]));
+    setAnsweredQuestionCount((count) => count + 1);
+    if (dynamicQuestionIndex < dynamicQuestions.length - 1) {
+      setDynamicQuestionIndex((i) => i + 1);
+    } else {
+      handleDynamicContinue();
+    }
+  }
+
+  function handleDynamicBack() {
+    setDynamicQuestionIndex((i) => Math.max(0, i - 1));
   }
 
   function handleDynamicSkip() {
@@ -455,35 +543,38 @@ export default function OnboardingInterviewPage() {
     // fade, so the "we're in AI mode now" signal doesn't repeat and wear
     // out.
     const isFirstDynamicPage = dynamicPageIndex <= 1;
-    return (
-      <div
-        className="flex min-h-screen items-center justify-center bg-gradient-to-b from-canvas from-30% to-[#EEF1FF] px-6 py-11"
-        style={{ perspective: 1200 }}
-      >
-        <div className="w-full max-w-[680px]">
-          <div className="mb-5 flex items-center gap-2.5">
-            <span
-              aria-hidden="true"
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#6B32C9] via-brand-600 to-[#9BD2FF] text-sm font-extrabold text-white animate-rd-pulse"
-            >
-              A
-            </span>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-ink-950">Aarav</span>
-                <span className="rounded-[5px] bg-gradient-to-r from-[#6B32C9] to-brand-600 px-1.5 py-0.5 text-[10px] font-bold tracking-widest text-white">
-                  ASKING SOMETHING NEW
-                </span>
-              </div>
-              <p className="text-xs text-ink-300">
-                Tailored to what you&apos;ve already told me — page {dynamicPageIndex || 1} of up to{" "}
-                {MAX_DYNAMIC_PAGES}.
-              </p>
-            </div>
-          </div>
+    const isLoadingScreen = isDynamicLoading || dynamicQuestions.length === 0;
+    const currentQuestion = dynamicQuestions[dynamicQuestionIndex];
+    const isLastInPage = dynamicQuestionIndex >= dynamicQuestions.length - 1;
+    const mood: AaravMood = errorPulse
+      ? "error"
+      : isVoiceActive
+        ? "listening"
+        : isLoadingScreen
+          ? "thinking"
+          : "idle";
+    const caption = errorPulse
+      ? undefined
+      : isVoiceActive
+        ? undefined
+        : isFinishingInterview
+          ? "Putting together your brand identity…"
+          : isLoadingScreen && isDynamicLoadingSlow
+            ? "Connecting the dots…"
+            : isLoadingScreen
+              ? "Understanding your brand…"
+              : "Tailored to what you've told me so far.";
+    // A soft, honest progress readout — the real total isn't known in
+    // advance (Aarav decides when he's learned enough), so this asymptotes
+    // toward "almost there" rather than ever claiming a fake 100% early.
+    const questionNumber = answeredQuestionCount + 1;
+    const progressPct = Math.min(92, Math.round((1 - 1 / (1 + questionNumber / 6)) * 100));
 
+    return (
+      <InterviewShell mood={mood} caption={caption} stepLabel="STEP 2 OF 4 · ASKING SOMETHING NEW" memoryTags={memoryTags}>
+        <div style={{ perspective: 1200 }}>
           <AnimatePresence mode="wait">
-            {isDynamicLoading || dynamicQuestions.length === 0 ? (
+            {isLoadingScreen ? (
               <motion.div
                 key="dynamic-loading"
                 initial={{ opacity: 0 }}
@@ -503,34 +594,46 @@ export default function OnboardingInterviewPage() {
                   </p>
                 )}
               </motion.div>
-            ) : (
+            ) : currentQuestion ? (
               <motion.div
-                key={`dynamic-page-${dynamicPageIndex}`}
+                key={`dynamic-question-${currentQuestion.id}`}
                 initial={
                   prefersReducedMotion
                     ? { opacity: 0 }
-                    : isFirstDynamicPage
+                    : isFirstDynamicPage && dynamicQuestionIndex === 0
                       ? { opacity: 0, rotateX: -22, scale: 0.9, y: 28 }
-                      : { opacity: 0, y: 14 }
+                      : { opacity: 0, x: 18 }
                 }
-                animate={{ opacity: 1, rotateX: 0, scale: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, rotateX: 0, scale: 1, x: 0 }}
+                exit={{ opacity: 0, x: -18 }}
                 transition={{
-                  duration: prefersReducedMotion ? 0.15 : isFirstDynamicPage ? 0.7 : 0.35,
+                  duration: prefersReducedMotion ? 0.15 : isFirstDynamicPage && dynamicQuestionIndex === 0 ? 0.7 : 0.3,
                   ease: [0.16, 1, 0.3, 1],
                 }}
-                className="space-y-4 rounded-[18px] border border-line-soft bg-white p-6 shadow-modal"
+                className="space-y-5 rounded-[18px] border border-line-soft bg-white p-6 shadow-modal"
               >
-                {dynamicQuestions.map((question) => (
-                  <DynamicQuestionCard
-                    key={question.id}
-                    question={question}
-                    value={dynamicAnswers[question.id] ?? (question.type === "chips" ? [] : "")}
-                    onChange={(value) => setDynamicAnswer(question.id, value)}
-                    token={token}
-                    brandId={selectedBrandId}
-                  />
-                ))}
+                <div className="flex items-center gap-3">
+                  <span className="shrink-0 font-mono text-[11px] font-bold tabular-nums text-brand-600">
+                    {String(questionNumber).padStart(2, "0")}
+                  </span>
+                  <div className="h-1 flex-1 overflow-hidden rounded-full bg-line-faint">
+                    <motion.div
+                      className="h-full rounded-full bg-gradient-to-r from-brand-600 to-[#8FC4FF]"
+                      animate={{ width: `${progressPct}%` }}
+                      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+                    />
+                  </div>
+                </div>
+
+                <DynamicQuestionCard
+                  key={currentQuestion.id}
+                  question={currentQuestion}
+                  value={dynamicAnswers[currentQuestion.id] ?? (currentQuestion.type === "chips" ? [] : "")}
+                  onChange={(value) => setDynamicAnswer(currentQuestion.id, value)}
+                  token={token}
+                  brandId={selectedBrandId}
+                  onVoiceActivity={setIsVoiceActive}
+                />
 
                 <div className="flex items-center justify-between border-t border-line-faint pt-[18px]">
                   <Button
@@ -542,24 +645,34 @@ export default function OnboardingInterviewPage() {
                     Skip to social connections
                   </Button>
                   <div className="flex items-center gap-3">
+                    {dynamicQuestionIndex > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleDynamicBack}
+                        disabled={isDynamicLoading}
+                        className="text-[13.5px] font-semibold text-ink-300 hover:text-ink-500"
+                      >
+                        Back
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={handleDynamicSkip}
                       disabled={isDynamicLoading}
-                      className="text-[13.5px] font-semibold text-ink-300"
+                      className="text-[13.5px] font-semibold text-ink-300 hover:text-ink-500"
                     >
                       Skip this page
                     </button>
-                    <Button onClick={handleDynamicContinue} isLoading={isDynamicLoading}>
-                      Continue
+                    <Button onClick={handleDynamicNext} isLoading={isDynamicLoading}>
+                      {isLastInPage ? "Continue" : "Next"}
                     </Button>
                   </div>
                 </div>
               </motion.div>
-            )}
+            ) : null}
           </AnimatePresence>
         </div>
-      </div>
+      </InterviewShell>
     );
   }
 
@@ -568,11 +681,13 @@ export default function OnboardingInterviewPage() {
     // done — deliberately not the fixed page nor part of the dynamic
     // phase, since it isn't really a *question* at all.
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-canvas from-30% to-[#EEF1FF] px-6 py-11">
-        <div className="w-full max-w-[680px]">
-          <div className="mb-2.5 flex items-center gap-2 text-[11.5px] font-bold tracking-[.12em] text-brand-600">
-            ALMOST DONE
-          </div>
+      <InterviewShell
+        mood={errorPulse ? "error" : isFinishingInterview ? "thinking" : "happy"}
+        caption={isFinishingInterview ? "Putting together your brand identity…" : "Almost done — anything else to add?"}
+        stepLabel="ALMOST DONE"
+        memoryTags={memoryTags}
+      >
+        <div>
           <h1 className="mb-1.5 text-[32px] font-bold leading-[1.12] tracking-tight text-ink-950">
             Drop in anything that shows your brand at its best
           </h1>
@@ -641,24 +756,37 @@ export default function OnboardingInterviewPage() {
             </div>
           </div>
         </div>
-      </div>
+      </InterviewShell>
     );
   }
 
   if (stage === "capstone" && brandReportDraft) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-canvas from-30% to-[#EEF1FF] px-6 py-11">
-        <div className="w-full max-w-[680px]">
-          <div className="mb-2.5 flex items-center gap-2 text-[11.5px] font-bold tracking-[.12em] text-brand-600">
-            STEP 3 OF 4 · BRAND IDENTITY
-          </div>
-          <h1 className="mb-1.5 text-[32px] font-bold leading-[1.12] tracking-tight text-ink-950">
-            Here&apos;s what Aarav learned
-          </h1>
-          <p className="mb-6 text-sm text-ink-400">
-            This is your brand&apos;s identity doc — every other agent reads it. Edit anything before
-            continuing; you can always come back to it later from Brand Data.
-          </p>
+      <InterviewShell
+        mood={errorPulse ? "error" : "happy"}
+        caption="Here's what I learned."
+        stepLabel="STEP 3 OF 4 · BRAND IDENTITY"
+        memoryTags={memoryTags}
+      >
+        <div>
+          {/* A one-time, premium reveal rather than a plain heading — this
+          is the payoff moment, not just another form screen. */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <span className="mb-2 inline-block text-[10.5px] font-bold uppercase tracking-[.16em] text-brand-600">
+              Brand Snapshot
+            </span>
+            <h1 className="mb-1.5 text-[32px] font-bold leading-[1.12] tracking-tight text-ink-950">
+              Here&apos;s what Aarav learned
+            </h1>
+            <p className="mb-6 text-sm text-ink-400">
+              This is your brand&apos;s identity doc — every other agent reads it. Edit anything before
+              continuing; you can always come back to it later from Brand Data.
+            </p>
+          </motion.div>
 
           <BrandIdentityCapstone
             report={brandReportDraft}
@@ -666,17 +794,19 @@ export default function OnboardingInterviewPage() {
             onContinue={saveCapstoneAndConnect}
           />
         </div>
-      </div>
+      </InterviewShell>
     );
   }
 
   if (stage === "connect") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-canvas from-40% to-[#EEF1FF] px-6 py-11">
-        <div className="w-full max-w-[720px]">
-          <div className="mb-2.5 flex items-center gap-2 text-[11.5px] font-bold tracking-[.12em] text-brand-600">
-            STEP 4 OF 4 · DISTRIBUTION
-          </div>
+      <InterviewShell
+        mood={errorPulse ? "error" : isLeaving ? "goodbye" : "happy"}
+        caption={isLeaving ? undefined : "All set — let's get you connected."}
+        stepLabel="STEP 4 OF 4 · DISTRIBUTION"
+        memoryTags={memoryTags}
+      >
+        <div className="max-w-[720px]">
           <h1 className="mb-1.5 text-[32px] font-bold leading-[1.12] tracking-tight text-ink-950">
             Connect where you publish
           </h1>
@@ -692,10 +822,12 @@ export default function OnboardingInterviewPage() {
               Aarav has what he needs to start building your brand memory. You can keep answering
               questions any time from Onboarding in Settings.
             </p>
-            <Button onClick={() => router.push("/")}>Enter Raindeer</Button>
+            <Button onClick={handleEnterApp} isLoading={isLeaving} disabled={isLeaving}>
+              Enter Raindeer
+            </Button>
           </div>
         </div>
-      </div>
+      </InterviewShell>
     );
   }
 
@@ -703,47 +835,35 @@ export default function OnboardingInterviewPage() {
   // scraped, and pick a palette/logo. Everything after this is Aarav's own
   // adaptive phase (see the "dynamic" stage above).
   const socialLinkEntries = Object.entries(extractedKit?.socialLinks ?? {});
+  const lastLogLine = scrapeLog.length > 0 ? scrapeLog[scrapeLog.length - 1].text : null;
+  const questionsMood: AaravMood = errorPulse ? "error" : isScraping ? "reading" : scrapeDone ? "happy" : "idle";
+  const questionsCaption = errorPulse
+    ? undefined
+    : isScraping
+      ? lastLogLine
+      : scrapeDone
+        ? "Found some good signal — take a look."
+        : undefined;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-canvas from-30% to-[#EEF1FF] px-6 py-11">
-      <div className="w-full max-w-[680px]">
-        <div className="mb-2.5 flex items-center gap-2 text-[11.5px] font-bold tracking-[.12em] text-brand-600">
-          STEP 1 OF 4 · WEBSITE &amp; BRAND KIT
-        </div>
-
-        <div className="mb-5 flex items-start justify-between gap-3">
-          <div className="flex items-start gap-3.5">
-            <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-600 via-[#9BD2FF] to-[#C6B4FF] animate-rd-pulse">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-sm font-extrabold text-brand-600">
-                A
-              </div>
-            </div>
-            <div className="min-w-0 pt-0.5">
-              <div className="mb-1 flex items-center gap-2">
-                <span className="text-sm font-bold text-ink-950">Aarav</span>
-                <span className="rounded-[5px] bg-brand-50 px-1.5 py-0.5 text-[10px] font-bold tracking-widest text-brand-600">
-                  AI ONBOARDING AGENT
-                </span>
-              </div>
-              <p className="text-xs text-ink-300">
-                Reading{" "}
-                <b className="text-ink-600">
-                  {(selectedBrand.product_catalog?.website as string | undefined) ?? "your public presence"}
-                </b>{" "}
-                for real, live signals.
-              </p>
-            </div>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
+    <InterviewShell mood={questionsMood} caption={questionsCaption} stepLabel="STEP 1 OF 4 · WEBSITE & BRAND KIT">
+      <div>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <p className="text-xs text-ink-300">
+            Reading{" "}
+            <b className="text-ink-600">
+              {(selectedBrand.product_catalog?.website as string | undefined) ?? "your public presence"}
+            </b>{" "}
+            for real, live signals.
+          </p>
+          <button
+            type="button"
             onClick={finishInterview}
             disabled={isFinishingInterview}
-            isLoading={isFinishingInterview}
-            className="shrink-0"
+            className="shrink-0 text-[12.5px] font-semibold text-ink-300 hover:text-brand-600"
           >
             Skip to social connections
-          </Button>
+          </button>
         </div>
 
         <div className="rounded-[18px] border border-line-soft bg-white p-6 shadow-modal">
@@ -864,8 +984,9 @@ export default function OnboardingInterviewPage() {
                   aria-pressed={isSelected}
                   aria-label={`Toggle color ${hex}`}
                   onClick={() => toggleColor(hex)}
-                  whileTap={{ scale: 0.93 }}
-                  animate={{ scale: isSelected ? 1.04 : 1 }}
+                  whileHover={{ y: -2 }}
+                  whileTap={{ scale: 0.93, y: 0 }}
+                  animate={{ scale: isSelected ? 1.04 : 1, y: 0 }}
                   transition={{ type: "spring", stiffness: 500, damping: 25 }}
                   className={
                     "relative flex flex-col items-center gap-1.5 rounded-2xl border-2 p-1 " +
@@ -959,6 +1080,6 @@ export default function OnboardingInterviewPage() {
           Answers are stored in your brand database and reused by Ved, Keshav, Kavi and Neer.
         </p>
       </div>
-    </div>
+    </InterviewShell>
   );
 }

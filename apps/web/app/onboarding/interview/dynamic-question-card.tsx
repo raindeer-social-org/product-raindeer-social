@@ -9,7 +9,7 @@
 // one tap away — a brand shouldn't have to hope Aarav happened to pick
 // "voice" to answer by speaking.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, transcribeOnboardingVoiceAnswer, type DynamicQuestion } from "@/lib/api";
 import { ChipButton } from "./chip-button";
 
@@ -23,12 +23,14 @@ function DynamicVoiceAnswer({
   onChange,
   token,
   brandId,
+  onVoiceActivity,
 }: {
   question: DynamicQuestion;
   value: string;
   onChange: (value: string) => void;
   token: string | null;
   brandId: string | null;
+  onVoiceActivity?: (active: boolean) => void;
 }) {
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -36,6 +38,11 @@ function DynamicVoiceAnswer({
   const [error, setError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+
+  // Don't leave the companion stuck showing "listening" if this question
+  // (and its still-recording mic) unmounts mid-take — e.g. navigating away
+  // via "Skip to social connections".
+  useEffect(() => () => onVoiceActivity?.(false), [onVoiceActivity]);
 
   async function startRecording() {
     setError(null);
@@ -59,6 +66,7 @@ function DynamicVoiceAnswer({
       mediaRecorderRef.current = recorder;
       recorder.start();
       setIsRecording(true);
+      onVoiceActivity?.(true);
     } catch {
       setUseTextFallback(true);
     }
@@ -77,6 +85,7 @@ function DynamicVoiceAnswer({
     });
     recorder.stop();
     setIsRecording(false);
+    onVoiceActivity?.(false);
 
     if (!token || !brandId) return;
     setIsTranscribing(true);
@@ -143,12 +152,14 @@ export function DynamicQuestionCard({
   onChange,
   token,
   brandId,
+  onVoiceActivity,
 }: {
   question: DynamicQuestion;
   value: string | string[];
   onChange: (value: string | string[]) => void;
   token: string | null;
   brandId: string | null;
+  onVoiceActivity?: (active: boolean) => void;
 }) {
   return (
     <div className="rounded-[15px] border border-line-soft bg-white p-5">
@@ -191,6 +202,7 @@ export function DynamicQuestionCard({
           onChange={onChange}
           token={token}
           brandId={brandId}
+          onVoiceActivity={onVoiceActivity}
         />
       )}
     </div>

@@ -197,3 +197,115 @@ half is independent and can land anytime.**
     above (user asked for "the BEST UI and UX" broadly, not just this
     round's specific fixes) — worth a dedicated follow-up pass once
     Supabase is back and uploads can be tested end-to-end.
+- **2026-09-22 (same day, follow-up)** — User feedback on the shipped UI:
+  "only 10% what i wanted" — too plain, not enough motion, layout not
+  "professional." Explicitly asked for a half-screen "cute 3D interactive
+  robot" representing Aarav, reacting live to what he's doing, and to skip
+  prototyping and redesign the real pages directly. Shipped:
+  - **`aarav-companion.tsx`** (new) — a CSS/SVG mascot (no 3D engine/model;
+    this repo has no Three.js dep and one isn't worth adding for a single
+    character) animated with Framer Motion: gradient-shaded rounded body,
+    glowing pulsing antenna, a breathing float + grounded shadow for a
+    "dimensional" feel, and 5 moods (`idle`/`reading`/`thinking`/
+    `listening`/`happy`) that change its eyes, add orbiting "thought"
+    particles, or a pulse ring — driven by real page state, not decorative.
+  - **`interview-split-layout.tsx`** (new) — a two-pane shell (mascot +
+    live caption on a dark gradient left rail, step content on the right),
+    replacing the old full-bleed centered-card layout across every stage
+    (questions/dynamic/assets/capstone/connect). Mirrors the design
+    language of `signup/auth-split-layout.tsx` (which explicitly opted the
+    old interview *out* of the split treatment — this reverses that) but
+    with a reactive mascot instead of a static agent roster.
+  - Real integration, not just decoration: mood/caption are wired to
+    `isScraping`/`scrapeDone` (idle → reading, live scrape-log line as the
+    caption → happy), `isDynamicLoading`/`isFinishingInterview` (thinking),
+    and a new `onVoiceActivity` callback threaded from
+    `dynamic-question-card.tsx`'s `DynamicVoiceAnswer` up through
+    `DynamicQuestionCard` to `page.tsx` (listening, while a dynamic
+    question's mic is actively recording).
+  - Verified live end-to-end via Chrome (real scrape against
+    `linear.app`, real color extraction, real mood transitions
+    idle→reading→happy and →thinking) — not just a visual read of the
+    code. All 143 frontend tests + tsc + lint stay green; one test updated
+    for the "ASKING SOMETHING NEW" badge moving into the rail's stepLabel.
+- **2026-09-22 (same day, two more follow-ups)** — More direct feedback,
+  iterated live rather than re-asking:
+  1. "i want everything in center ... current one look like 90's very very
+     old i want morder UI" — replaced `interview-split-layout.tsx` (flat
+     solid dark rail) with `interview-shell.tsx`: centered single column,
+     gradient-mesh background, mascot directly above the step content
+     inside a glassmorphic card (translucent + backdrop-blur + soft glow).
+  2. User then attached a hand-drawn wireframe (`Images/aarav UI.png`)
+     clarifying the actual target: **two columns**, not one — "Aarav
+     questions" scrollable on the left, the robot fixed/"no-scroll" in its
+     own panel on the right so it's always in view while long question
+     pages scroll past; the whole outer page itself never scrolls. Robot
+     spec from the sketch: two antennas (not one), three oval feet, and 4
+     explicit requirements — "moving", "thinking", "Revolving Head", "Cute
+     very Cute". Rebuilt `interview-shell.tsx` again as
+     `grid h-screen ... overflow-hidden` with an independently-scrollable
+     left panel and a fixed light-gradient right panel; rebuilt
+     `aarav-companion.tsx`'s body to match (two antennas, three feet, a
+     real `rotateY` "revolving head" swivel kept inside ±34° so the flat
+     face never shows its mirrored backface).
+  3. Verified live in Chrome against the same real `linear.app` session —
+     confirmed the left panel scrolls independently while the robot panel
+     stays fixed in view, and watched Aarav's real dynamic-question chips
+     load (asking about Linear's actual industries/competitors/team size —
+     good end-to-end proof the whole pipeline, not just the UI, works).
+     143/143 tests, tsc, lint all green throughout.
+  - **Note (resolved):** GitHub Actions didn't pick up pushes to PR #165 —
+    root cause found: **PR #165 had already auto-merged** (right at commit
+    `296d1eb`, the moment its CI went green) partway through this session,
+    so every commit pushed afterward landed on a dead, already-merged
+    branch and silently never reached `main`. Fixed by opening #168,
+    cherry-picking the 3 orphaned commits onto a fresh branch off `main`,
+    and opening **PR #169** — CI dispatched normally there, confirming the
+    stuck state was specific to the already-closed PR #165, not a repo
+    problem. **Lesson for next time:** if pushes to an open PR stop
+    triggering CI, check `gh pr view <N> --json state,mergedAt` first —
+    don't assume it's a GitHub outage.
+- **2026-09-22 (same day, flagship redesign brief)** — User sent a large,
+  detailed creative brief asking for a full "flagship" onboarding redesign
+  (state machine, one-question-at-a-time flow, "Brand Memory" system,
+  Brand Snapshot payoff, image-analysis moment, full mobile recompose,
+  accessibility audit). Too large to build literally end-to-end in one
+  pass without becoming an unreviewable wall of code — scoped down to the
+  highest-leverage, honest subset and said so explicitly up front rather
+  than silently dropping requirements. Shipped on top of PR #169's branch:
+  - **Real state machine, not a mood grab-bag** — `aarav-companion.tsx`'s
+    `AaravMood` extended with `error` (CONFUSED — apologetic amber-tinted
+    worried eyes + head shake, triggered alongside every existing
+    `pushToast(..., "error")` call via a new `flashError()` helper) and
+    `goodbye` (a wave/bow on "Enter Raindeer", with a real ~650ms visible
+    beat before navigating — previously instant).
+  - **One question at a time.** The dynamic phase used to dump a whole
+    page of Aarav-generated questions on screen together; now
+    `dynamicQuestionIndex` walks through them one at a time client-side
+    (Next/Back, no extra backend calls until the page's last question),
+    with a cinematic slide transition and a `01`/`02`-style counter + thin
+    animated progress line that asymptotes toward "almost there" rather
+    than ever faking a real total (the actual question count isn't known
+    until Aarav says done).
+  - **Brand Memory** — `interview-shell.tsx` gained a `memoryTags` prop:
+    small pill tags that fly in next to Aarav as real facts land (colors
+    picked, logo applied, each dynamic answer's actual value) via
+    `page.tsx`'s `addMemoryTag()`. Every tag traces back to real collected
+    data — nothing decorative or invented.
+  - **Brand Snapshot payoff** — the capstone screen got an eyebrow label
+    + reveal animation wrapper (kept `BrandIdentityCapstone`'s internals
+    and button text untouched so the existing edit-and-save test still
+    passes).
+  - Micro-interactions: hover lift added to `ChipButton` and the palette
+    swatches (spring `whileHover`/`whileTap`); left the shared `Button`
+    primitive alone since it's used app-wide, out of scope for an
+    onboarding-only pass.
+  - **Explicitly deferred, not faked:** the image-"scanning" analysis
+    moment (no real vision analysis exists on uploaded assets — didn't
+    fabricate labels claiming otherwise) and a full mobile-layout
+    redesign pass (kept functional, didn't redesign it this round).
+  - Added 2 new tests (one-question-at-a-time Next/Back + memory tags)
+    and updated the "Enter Raindeer" test for the new goodbye delay —
+    145/145 frontend tests, tsc, lint all green. Verified live in Chrome
+    end-to-end against a real site again (fresh signup, real scrape, real
+    multi-question dynamic page, watched memory tags fly in live).
