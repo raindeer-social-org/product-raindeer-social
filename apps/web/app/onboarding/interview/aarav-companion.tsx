@@ -1,15 +1,17 @@
 "use client";
 
 // A small, cute, always-alive stand-in for Aarav himself — the visual
-// centerpiece of the interview shell (see interview-shell.tsx). Built
-// entirely from CSS/SVG + Framer Motion (no 3D engine/model — this repo
-// has no Three.js dependency and one isn't worth adding for a single
-// mascot); depth comes from layered gradients, a soft ground shadow that
-// breathes with the float animation, and a blurred ambient glow behind it,
-// which reads as "alive and dimensional" without the weight of a real 3D
-// renderer. `mood` is driven by whatever Aarav is actually doing on screen
-// right now (scraping, waiting on the LLM, listening to a voice answer,
-// done) — see page.tsx's companionMood — not just decorative idle motion.
+// centerpiece of the interview shell (see interview-shell.tsx). Shape and
+// behavior follow the user's own wireframe (Images/aarav UI.png): a rounded
+// head/body with two antennas, three oval feet, and 4 explicit requirements
+// — "moving", "thinking", "revolving head", "cute very cute". Built
+// entirely from CSS/SVG + Framer Motion (no 3D engine/model — this repo has
+// no Three.js dependency and one isn't worth adding for a single mascot);
+// the "revolving head" is a real 3D CSS rotateY on the head only (kept to a
+// swivel range that never crosses 90°, so the flat face never shows its
+// mirrored backface), not just a decorative flourish. `mood` is driven by
+// whatever Aarav is actually doing on screen right now (scraping, waiting
+// on the LLM, listening to a voice answer, done) — see page.tsx.
 
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 
@@ -28,14 +30,14 @@ function Eye({ mood }: { mood: AaravMood }) {
 
   if (mood === "happy") {
     return (
-      <svg width="15" height="11" viewBox="0 0 15 11" fill="none" aria-hidden="true">
-        <path d="M1 9C3.2 2 11.8 2 14 9" stroke="#BFE0FF" strokeWidth="2.6" strokeLinecap="round" />
+      <svg width="16" height="12" viewBox="0 0 16 12" fill="none" aria-hidden="true">
+        <path d="M1 10C3.4 2 12.6 2 15 10" stroke="#BFE0FF" strokeWidth="2.8" strokeLinecap="round" />
       </svg>
     );
   }
 
   if (prefersReducedMotion) {
-    return <span className="block h-[13px] w-[13px] rounded-full bg-gradient-to-b from-[#D6E7FF] to-[#8FC4FF]" />;
+    return <span className="block h-4 w-4 rounded-full bg-gradient-to-b from-[#E4EFFF] to-[#8FC4FF]" />;
   }
 
   const animate =
@@ -44,7 +46,7 @@ function Eye({ mood }: { mood: AaravMood }) {
       : mood === "thinking"
         ? { y: [0, -2, -2, 0], scaleY: [1, 1, 0.15, 1] }
         : mood === "listening"
-          ? { scale: [1, 1.28, 1] }
+          ? { scale: [1, 1.3, 1] }
           : { scaleY: [1, 1, 1, 0.12, 1] }; // idle: occasional blink
 
   const transition =
@@ -58,10 +60,36 @@ function Eye({ mood }: { mood: AaravMood }) {
 
   return (
     <motion.span
-      className="block h-[13px] w-[13px] rounded-full bg-gradient-to-b from-[#D6E7FF] to-[#8FC4FF]"
+      className="block h-4 w-4 rounded-full bg-gradient-to-b from-[#E4EFFF] to-[#8FC4FF] shadow-[0_0_6px_rgba(143,196,255,.8)]"
       animate={animate}
       transition={transition}
     />
+  );
+}
+
+function Antenna({ side, mood }: { side: "left" | "right"; mood: AaravMood }) {
+  const prefersReducedMotion = useReducedMotion();
+  return (
+    <div
+      aria-hidden="true"
+      className={
+        "absolute top-0 flex -translate-y-[72%] flex-col items-center " +
+        (side === "left" ? "left-[22%] -rotate-[18deg]" : "right-[22%] rotate-[18deg]")
+      }
+    >
+      <motion.span
+        className="h-[9px] w-[9px] rounded-full bg-gradient-to-br from-[#BFE0FF] to-brand-600 shadow-[0_0_14px_3px_rgba(27,77,255,.55)]"
+        animate={
+          prefersReducedMotion
+            ? {}
+            : mood === "thinking"
+              ? { opacity: [0.55, 1, 0.55], scale: [1, 1.3, 1] }
+              : { opacity: [0.8, 1, 0.8], scale: [1, 1.06, 1] }
+        }
+        transition={{ duration: mood === "thinking" ? 0.75 : 2.4, repeat: Infinity, ease: "easeInOut" }}
+      />
+      <span className="h-4 w-[2.5px] bg-gradient-to-b from-brand-300 to-transparent" />
+    </div>
   );
 }
 
@@ -80,8 +108,22 @@ export function AaravCompanion({
   dark?: boolean;
 }) {
   const prefersReducedMotion = useReducedMotion();
-  const dim = size === "lg" ? 208 : 168;
+  const dim = size === "lg" ? 200 : 160;
   const shownCaption = caption ?? DEFAULT_CAPTION[mood];
+
+  // "Revolving Head" (from the wireframe) — a real rotateY swivel, kept
+  // inside ±34deg so the flat face never turns edge-on/reveals its mirrored
+  // backface. Idle gets the widest, slowest "looking around" swivel since
+  // nothing else is competing for attention; thinking/listening/reading
+  // keep a smaller swivel so their own signal (particles/pulse/scan) reads
+  // clearly.
+  const headSwivel =
+    mood === "idle"
+      ? { rotateY: [0, 30, 0, -30, 0] }
+      : mood === "happy"
+        ? { rotateY: [0, 16, -16, 0] }
+        : { rotateY: [0, 14, 0, -14, 0] };
+  const headSwivelDuration = mood === "idle" ? 6.5 : mood === "happy" ? 0.9 : mood === "thinking" ? 3.2 : 4.5;
 
   return (
     <div className="relative flex flex-col items-center justify-center">
@@ -93,20 +135,20 @@ export function AaravCompanion({
           style={{ background: "radial-gradient(circle at 50% 42%, rgba(143,196,255,.5), transparent 65%)" }}
         />
 
-        {/* slow-rotating conic halo ring — the one "sci-fi tech" flourish
-        that reads as modern rather than a flat static icon */}
+        {/* slow-rotating conic halo ring — a "sci-fi tech" flourish that
+        reads as modern rather than a flat static icon */}
         {!prefersReducedMotion ? (
           <motion.div
             aria-hidden="true"
             className="pointer-events-none absolute rounded-full opacity-[0.35]"
             style={{
-              width: dim * 1.18,
-              height: dim * 1.18,
+              width: dim * 1.22,
+              height: dim * 1.22,
               background:
                 "conic-gradient(from 0deg, transparent 0%, #8FC4FF 15%, transparent 30%, transparent 60%, #6B32C9 75%, transparent 92%)",
-              maskImage: "radial-gradient(closest-side, transparent 76%, black 78%, black 86%, transparent 88%)",
+              maskImage: "radial-gradient(closest-side, transparent 74%, black 76%, black 85%, transparent 87%)",
               WebkitMaskImage:
-                "radial-gradient(closest-side, transparent 76%, black 78%, black 86%, transparent 88%)",
+                "radial-gradient(closest-side, transparent 74%, black 76%, black 85%, transparent 87%)",
             }}
             animate={{ rotate: 360 }}
             transition={{ duration: mood === "thinking" ? 5 : 14, repeat: Infinity, ease: "linear" }}
@@ -149,72 +191,83 @@ export function AaravCompanion({
         {/* ground shadow */}
         <motion.div
           aria-hidden="true"
-          className="absolute bottom-2 rounded-full bg-ink-950/15 blur-[6px]"
-          style={{ width: dim * 0.5, height: dim * 0.09 }}
+          className="absolute bottom-4 rounded-full bg-ink-950/15 blur-[6px]"
+          style={{ width: dim * 0.46, height: dim * 0.08 }}
           animate={prefersReducedMotion ? {} : { scaleX: [1, 0.82, 1], opacity: [0.35, 0.2, 0.35] }}
           transition={{ duration: mood === "happy" ? 0.9 : 3.2, repeat: Infinity, ease: "easeInOut" }}
         />
 
-        {/* body */}
+        {/* whole body — float/bob ("moving") */}
         <motion.div
           className="relative"
-          style={{ width: dim, height: dim }}
+          style={{ width: dim, height: dim * 0.92 }}
           animate={
             prefersReducedMotion
               ? {}
               : mood === "happy"
-                ? { y: [0, -20, 0], rotate: [0, -4, 4, 0] }
+                ? { y: [0, -18, 0], rotate: [0, -3, 3, 0] }
                 : mood === "listening"
                   ? { y: [0, -6, 0] }
-                  : { y: [0, -10, 0], rotate: [-1.5, 1.5, -1.5] }
+                  : { y: [0, -9, 0] }
           }
           transition={{
-            duration: mood === "happy" ? 0.85 : mood === "listening" ? 1.1 : 3.4,
+            duration: mood === "happy" ? 0.85 : mood === "listening" ? 1.1 : 3.2,
             repeat: Infinity,
             ease: "easeInOut",
           }}
         >
-          {/* antenna */}
-          <div className="absolute left-1/2 top-0 flex -translate-x-1/2 -translate-y-[78%] flex-col items-center">
-            <motion.span
-              aria-hidden="true"
-              className="h-[11px] w-[11px] rounded-full bg-gradient-to-br from-[#BFE0FF] to-brand-600 shadow-[0_0_16px_4px_rgba(27,77,255,.55)]"
-              animate={
-                prefersReducedMotion
-                  ? {}
-                  : mood === "thinking"
-                    ? { opacity: [0.55, 1, 0.55], scale: [1, 1.35, 1] }
-                    : { opacity: [0.8, 1, 0.8], scale: [1, 1.08, 1] }
-              }
-              transition={{ duration: mood === "thinking" ? 0.75 : 2.4, repeat: Infinity, ease: "easeInOut" }}
-            />
-            <span aria-hidden="true" className="h-5 w-[3px] bg-gradient-to-b from-brand-300 to-transparent" />
+          {/* three oval feet — planted, don't turn with the head */}
+          <div className="absolute bottom-0 left-1/2 flex -translate-x-1/2 items-end gap-[8%]">
+            {[0, 1, 2].map((i) => (
+              <motion.span
+                key={i}
+                className="rounded-[50%] bg-gradient-to-b from-brand-300 to-brand-600 opacity-90"
+                style={{ width: dim * 0.15, height: dim * (i === 1 ? 0.22 : 0.18) }}
+                animate={prefersReducedMotion ? {} : { scaleY: [1, 0.94, 1] }}
+                transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut", delay: i * 0.15 }}
+              />
+            ))}
           </div>
 
-          {/* head/body */}
-          <div className="h-full w-full rounded-[34%] border border-white/70 bg-gradient-to-br from-[#EAF1FF] via-white to-[#DCE7FF] shadow-[0_24px_46px_-20px_rgba(27,77,255,.5)]">
-            <div className="absolute inset-[9%] overflow-hidden rounded-[30%] bg-gradient-to-br from-brand-600 via-[#6B32C9] to-[#8FC4FF]">
-              {/* glossy highlight — the "premium glass" touch */}
-              <div
-                aria-hidden="true"
-                className="absolute -left-[10%] -top-[18%] h-[65%] w-[65%] rounded-full bg-white opacity-30 blur-2xl"
-              />
-            </div>
-            <div className="absolute inset-[19%] flex items-center justify-center overflow-hidden rounded-[38%] bg-[#0A1633]">
-              <div className="flex items-center gap-[22%]">
-                <Eye mood={mood} />
-                <Eye mood={mood} />
+          {/* head — "Revolving Head": real rotateY swivel, preserve-3d */}
+          <motion.div
+            className="absolute inset-x-0 top-0"
+            style={{ height: dim * 0.72, perspective: 700 }}
+          >
+            <motion.div
+              className="relative h-full w-full"
+              style={{ transformStyle: "preserve-3d" }}
+              animate={prefersReducedMotion ? {} : headSwivel}
+              transition={{ duration: headSwivelDuration, repeat: Infinity, ease: "easeInOut" }}
+            >
+              <Antenna side="left" mood={mood} />
+              <Antenna side="right" mood={mood} />
+
+              <div className="h-full w-full rounded-[38%] border border-white/70 bg-gradient-to-br from-[#EAF1FF] via-white to-[#DCE7FF] shadow-[0_22px_44px_-18px_rgba(27,77,255,.5)]">
+                <div className="absolute inset-[8%] overflow-hidden rounded-[32%] bg-gradient-to-br from-brand-600 via-[#6B32C9] to-[#8FC4FF]">
+                  {/* glossy highlight — the "premium glass" touch */}
+                  <div
+                    aria-hidden="true"
+                    className="absolute -left-[10%] -top-[18%] h-[65%] w-[65%] rounded-full bg-white opacity-30 blur-2xl"
+                  />
+                </div>
+                <div className="absolute inset-[20%] flex items-center justify-center overflow-hidden rounded-[40%] bg-[#0A1633]">
+                  <div className="flex items-center gap-[26%]">
+                    <Eye mood={mood} />
+                    <Eye mood={mood} />
+                  </div>
+                  {mood === "reading" && !prefersReducedMotion ? (
+                    <motion.div
+                      aria-hidden="true"
+                      className="absolute inset-x-[8%] h-[2.5px] rounded-full bg-gradient-to-r from-transparent via-[#8FC4FF] to-transparent"
+                      animate={{ top: ["18%", "78%", "18%"] }}
+                      transition={{ duration: 1.9, repeat: Infinity, ease: "easeInOut" }}
+                    />
+                  ) : null}
+                </div>
               </div>
-              {mood === "reading" && !prefersReducedMotion ? (
-                <motion.div
-                  aria-hidden="true"
-                  className="absolute inset-x-[8%] h-[2.5px] rounded-full bg-gradient-to-r from-transparent via-[#8FC4FF] to-transparent"
-                  animate={{ top: ["18%", "78%", "18%"] }}
-                  transition={{ duration: 1.9, repeat: Infinity, ease: "easeInOut" }}
-                />
-              ) : null}
-            </div>
-          </div>
+            </motion.div>
+          </motion.div>
         </motion.div>
       </div>
 

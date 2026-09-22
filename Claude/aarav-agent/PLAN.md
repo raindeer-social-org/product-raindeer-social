@@ -228,3 +228,36 @@ half is independent and can land anytime.**
     idle→reading→happy and →thinking) — not just a visual read of the
     code. All 143 frontend tests + tsc + lint stay green; one test updated
     for the "ASKING SOMETHING NEW" badge moving into the rail's stepLabel.
+- **2026-09-22 (same day, two more follow-ups)** — More direct feedback,
+  iterated live rather than re-asking:
+  1. "i want everything in center ... current one look like 90's very very
+     old i want morder UI" — replaced `interview-split-layout.tsx` (flat
+     solid dark rail) with `interview-shell.tsx`: centered single column,
+     gradient-mesh background, mascot directly above the step content
+     inside a glassmorphic card (translucent + backdrop-blur + soft glow).
+  2. User then attached a hand-drawn wireframe (`Images/aarav UI.png`)
+     clarifying the actual target: **two columns**, not one — "Aarav
+     questions" scrollable on the left, the robot fixed/"no-scroll" in its
+     own panel on the right so it's always in view while long question
+     pages scroll past; the whole outer page itself never scrolls. Robot
+     spec from the sketch: two antennas (not one), three oval feet, and 4
+     explicit requirements — "moving", "thinking", "Revolving Head", "Cute
+     very Cute". Rebuilt `interview-shell.tsx` again as
+     `grid h-screen ... overflow-hidden` with an independently-scrollable
+     left panel and a fixed light-gradient right panel; rebuilt
+     `aarav-companion.tsx`'s body to match (two antennas, three feet, a
+     real `rotateY` "revolving head" swivel kept inside ±34° so the flat
+     face never shows its mirrored backface).
+  3. Verified live in Chrome against the same real `linear.app` session —
+     confirmed the left panel scrolls independently while the robot panel
+     stays fixed in view, and watched Aarav's real dynamic-question chips
+     load (asking about Linear's actual industries/competitors/team size —
+     good end-to-end proof the whole pipeline, not just the UI, works).
+     143/143 tests, tsc, lint all green throughout.
+  - **Note:** GitHub Actions did not pick up two consecutive pushes to PR
+    #165 for an extended period (branch ref updated instantly per the Git
+    Data API, but the PR object itself stayed stale — `mergeable_state:
+    "unknown"`) — flagged to the user as a possible GitHub-side stuck
+    state on PR #165 specifically, not a code issue. Worth checking
+    `gh pr view 165` fresh next session if this round's pushes show the
+    same symptom.
