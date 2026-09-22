@@ -27,6 +27,8 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { BrandIdentityCapstone } from "./brand-identity-capstone";
 import { SocialConnectionsPanel } from "@/app/social-accounts/social-connections-panel";
 import { DynamicQuestionCard } from "./dynamic-question-card";
+import { InterviewSplitLayout } from "./interview-split-layout";
+import type { AaravMood } from "./aarav-companion";
 
 const PRESET_COLORS = ["#1B4DFF", "#0A1633", "#0E7A4E", "#B46A00", "#6B32C9", "#C9295A"];
 
@@ -89,6 +91,11 @@ export default function OnboardingInterviewPage() {
   // swaps the loading copy after a few seconds so a slow-but-working
   // response doesn't read as "stuck" during the wait.
   const [isDynamicLoadingSlow, setIsDynamicLoadingSlow] = useState(false);
+  // Drives the companion's "listening" mood while a dynamic question's mic
+  // is actively recording (see dynamic-question-card.tsx's onVoiceActivity)
+  // — real integration between the mascot and what Aarav is doing, not
+  // just decorative idle motion.
+  const [isVoiceActive, setIsVoiceActive] = useState(false);
 
   const [colors, setColors] = useState<string[]>([]);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
@@ -455,35 +462,23 @@ export default function OnboardingInterviewPage() {
     // fade, so the "we're in AI mode now" signal doesn't repeat and wear
     // out.
     const isFirstDynamicPage = dynamicPageIndex <= 1;
-    return (
-      <div
-        className="flex min-h-screen items-center justify-center bg-gradient-to-b from-canvas from-30% to-[#EEF1FF] px-6 py-11"
-        style={{ perspective: 1200 }}
-      >
-        <div className="w-full max-w-[680px]">
-          <div className="mb-5 flex items-center gap-2.5">
-            <span
-              aria-hidden="true"
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#6B32C9] via-brand-600 to-[#9BD2FF] text-sm font-extrabold text-white animate-rd-pulse"
-            >
-              A
-            </span>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-ink-950">Aarav</span>
-                <span className="rounded-[5px] bg-gradient-to-r from-[#6B32C9] to-brand-600 px-1.5 py-0.5 text-[10px] font-bold tracking-widest text-white">
-                  ASKING SOMETHING NEW
-                </span>
-              </div>
-              <p className="text-xs text-ink-300">
-                Tailored to what you&apos;ve already told me — page {dynamicPageIndex || 1} of up to{" "}
-                {MAX_DYNAMIC_PAGES}.
-              </p>
-            </div>
-          </div>
+    const isLoadingScreen = isDynamicLoading || dynamicQuestions.length === 0;
+    const mood: AaravMood = isVoiceActive ? "listening" : isLoadingScreen ? "thinking" : "idle";
+    const caption = isVoiceActive
+      ? undefined
+      : isFinishingInterview
+        ? "Putting together your brand identity…"
+        : isLoadingScreen && isDynamicLoadingSlow
+          ? "A few well-chosen options beat a quick guess…"
+          : isLoadingScreen
+            ? undefined
+            : `Page ${dynamicPageIndex || 1} of up to ${MAX_DYNAMIC_PAGES} — tailored to what you've told me.`;
 
+    return (
+      <InterviewSplitLayout mood={mood} caption={caption} stepLabel="STEP 2 OF 4 · ASKING SOMETHING NEW">
+        <div style={{ perspective: 1200 }}>
           <AnimatePresence mode="wait">
-            {isDynamicLoading || dynamicQuestions.length === 0 ? (
+            {isLoadingScreen ? (
               <motion.div
                 key="dynamic-loading"
                 initial={{ opacity: 0 }}
@@ -529,6 +524,7 @@ export default function OnboardingInterviewPage() {
                     onChange={(value) => setDynamicAnswer(question.id, value)}
                     token={token}
                     brandId={selectedBrandId}
+                    onVoiceActivity={setIsVoiceActive}
                   />
                 ))}
 
@@ -559,7 +555,7 @@ export default function OnboardingInterviewPage() {
             )}
           </AnimatePresence>
         </div>
-      </div>
+      </InterviewSplitLayout>
     );
   }
 
@@ -568,11 +564,12 @@ export default function OnboardingInterviewPage() {
     // done — deliberately not the fixed page nor part of the dynamic
     // phase, since it isn't really a *question* at all.
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-canvas from-30% to-[#EEF1FF] px-6 py-11">
-        <div className="w-full max-w-[680px]">
-          <div className="mb-2.5 flex items-center gap-2 text-[11.5px] font-bold tracking-[.12em] text-brand-600">
-            ALMOST DONE
-          </div>
+      <InterviewSplitLayout
+        mood={isFinishingInterview ? "thinking" : "happy"}
+        caption={isFinishingInterview ? "Putting together your brand identity…" : "Almost done — anything else to add?"}
+        stepLabel="ALMOST DONE"
+      >
+        <div>
           <h1 className="mb-1.5 text-[32px] font-bold leading-[1.12] tracking-tight text-ink-950">
             Drop in anything that shows your brand at its best
           </h1>
@@ -641,17 +638,14 @@ export default function OnboardingInterviewPage() {
             </div>
           </div>
         </div>
-      </div>
+      </InterviewSplitLayout>
     );
   }
 
   if (stage === "capstone" && brandReportDraft) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-canvas from-30% to-[#EEF1FF] px-6 py-11">
-        <div className="w-full max-w-[680px]">
-          <div className="mb-2.5 flex items-center gap-2 text-[11.5px] font-bold tracking-[.12em] text-brand-600">
-            STEP 3 OF 4 · BRAND IDENTITY
-          </div>
+      <InterviewSplitLayout mood="happy" caption="Here's what I learned." stepLabel="STEP 3 OF 4 · BRAND IDENTITY">
+        <div>
           <h1 className="mb-1.5 text-[32px] font-bold leading-[1.12] tracking-tight text-ink-950">
             Here&apos;s what Aarav learned
           </h1>
@@ -666,17 +660,14 @@ export default function OnboardingInterviewPage() {
             onContinue={saveCapstoneAndConnect}
           />
         </div>
-      </div>
+      </InterviewSplitLayout>
     );
   }
 
   if (stage === "connect") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-canvas from-40% to-[#EEF1FF] px-6 py-11">
-        <div className="w-full max-w-[720px]">
-          <div className="mb-2.5 flex items-center gap-2 text-[11.5px] font-bold tracking-[.12em] text-brand-600">
-            STEP 4 OF 4 · DISTRIBUTION
-          </div>
+      <InterviewSplitLayout mood="happy" caption="All set — let's get you connected." stepLabel="STEP 4 OF 4 · DISTRIBUTION">
+        <div className="max-w-[720px]">
           <h1 className="mb-1.5 text-[32px] font-bold leading-[1.12] tracking-tight text-ink-950">
             Connect where you publish
           </h1>
@@ -695,7 +686,7 @@ export default function OnboardingInterviewPage() {
             <Button onClick={() => router.push("/")}>Enter Raindeer</Button>
           </div>
         </div>
-      </div>
+      </InterviewSplitLayout>
     );
   }
 
@@ -703,47 +694,29 @@ export default function OnboardingInterviewPage() {
   // scraped, and pick a palette/logo. Everything after this is Aarav's own
   // adaptive phase (see the "dynamic" stage above).
   const socialLinkEntries = Object.entries(extractedKit?.socialLinks ?? {});
+  const lastLogLine = scrapeLog.length > 0 ? scrapeLog[scrapeLog.length - 1].text : null;
+  const questionsMood: AaravMood = isScraping ? "reading" : scrapeDone ? "happy" : "idle";
+  const questionsCaption = isScraping ? lastLogLine : scrapeDone ? "Found some good signal — take a look." : undefined;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-canvas from-30% to-[#EEF1FF] px-6 py-11">
-      <div className="w-full max-w-[680px]">
-        <div className="mb-2.5 flex items-center gap-2 text-[11.5px] font-bold tracking-[.12em] text-brand-600">
-          STEP 1 OF 4 · WEBSITE &amp; BRAND KIT
-        </div>
-
-        <div className="mb-5 flex items-start justify-between gap-3">
-          <div className="flex items-start gap-3.5">
-            <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-600 via-[#9BD2FF] to-[#C6B4FF] animate-rd-pulse">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-sm font-extrabold text-brand-600">
-                A
-              </div>
-            </div>
-            <div className="min-w-0 pt-0.5">
-              <div className="mb-1 flex items-center gap-2">
-                <span className="text-sm font-bold text-ink-950">Aarav</span>
-                <span className="rounded-[5px] bg-brand-50 px-1.5 py-0.5 text-[10px] font-bold tracking-widest text-brand-600">
-                  AI ONBOARDING AGENT
-                </span>
-              </div>
-              <p className="text-xs text-ink-300">
-                Reading{" "}
-                <b className="text-ink-600">
-                  {(selectedBrand.product_catalog?.website as string | undefined) ?? "your public presence"}
-                </b>{" "}
-                for real, live signals.
-              </p>
-            </div>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
+    <InterviewSplitLayout mood={questionsMood} caption={questionsCaption} stepLabel="STEP 1 OF 4 · WEBSITE & BRAND KIT">
+      <div>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <p className="text-xs text-ink-300">
+            Reading{" "}
+            <b className="text-ink-600">
+              {(selectedBrand.product_catalog?.website as string | undefined) ?? "your public presence"}
+            </b>{" "}
+            for real, live signals.
+          </p>
+          <button
+            type="button"
             onClick={finishInterview}
             disabled={isFinishingInterview}
-            isLoading={isFinishingInterview}
-            className="shrink-0"
+            className="shrink-0 text-[12.5px] font-semibold text-ink-300 hover:text-brand-600"
           >
             Skip to social connections
-          </Button>
+          </button>
         </div>
 
         <div className="rounded-[18px] border border-line-soft bg-white p-6 shadow-modal">
@@ -959,6 +932,6 @@ export default function OnboardingInterviewPage() {
           Answers are stored in your brand database and reused by Ved, Keshav, Kavi and Neer.
         </p>
       </div>
-    </div>
+    </InterviewSplitLayout>
   );
 }

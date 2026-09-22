@@ -232,7 +232,7 @@ describe("OnboardingInterviewPage", () => {
     await skipFixedPage(user);
 
     expect(await screen.findByText("What tools does LexStart integrate with?")).toBeInTheDocument();
-    expect(screen.getByText("ASKING SOMETHING NEW")).toBeInTheDocument();
+    expect(screen.getByText("STEP 2 OF 4 · ASKING SOMETHING NEW")).toBeInTheDocument();
 
     // Every free-text dynamic question is voice-first now (issue #164) —
     // typing means tapping "Prefer typing?" first, same as a "voice"-typed
