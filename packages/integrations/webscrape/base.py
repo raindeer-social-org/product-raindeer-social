@@ -17,7 +17,7 @@ class ScrapeResult:
     logo_content_type: str | None = None
     colors: list[str] = field(default_factory=list)
     # Social profile links found on the page (e.g. footer/header icons
-    # linking to instagram.com/x.com/linkedin.com/...), deduplicated by
+    # linking out to the brand's other public profiles), deduplicated by
     # platform, first match wins. This repo doesn't attempt to scrape
     # *those* pages directly (most require auth or actively block
     # unauthenticated scraping) — surfacing the links themselves is real,
