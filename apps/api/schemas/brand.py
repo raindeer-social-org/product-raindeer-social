@@ -22,6 +22,10 @@ class BrandUpdate(BaseModel):
     colors: list[str] | None = None
     tone_descriptors: list[str] | None = None
     product_catalog: dict | None = None
+    # Issue #158 — lets the onboarding interview's editable brand-identity
+    # capstone screen persist the user's edits onto the same field
+    # run_onboarding_agent (packages/agents/onboarding/graph.py) writes.
+    brand_report: dict | None = None
 
 
 class BrandRead(BaseModel):

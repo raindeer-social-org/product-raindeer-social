@@ -32,6 +32,12 @@ class OnboardingResearch(Base):
     website_summary: Mapped[str | None] = mapped_column(nullable=True)
     website_logo_url: Mapped[str | None] = mapped_column(nullable=True)
     website_colors: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Social profile links found on the scraped page (footer/header icons,
+    # "follow us" sections — see packages/integrations/webscrape's
+    # _find_social_links), keyed by platform name ("instagram", "linkedin",
+    # ...), valued by the URL found. Never scraped further — see that
+    # function's docstring for why — just surfaced as real signal.
+    website_social_links: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

@@ -5,7 +5,14 @@ from fastapi.testclient import TestClient
 
 from apps.api.auth.jwt import create_access_token, hash_password
 from apps.api.main import app
-from apps.api.models import Brand, OnboardingDynamicAnswer, Organization, User, UserRole
+from apps.api.models import (
+    MAX_DYNAMIC_PAGES,
+    Brand,
+    OnboardingDynamicAnswer,
+    Organization,
+    User,
+    UserRole,
+)
 
 client = TestClient(app)
 uses_test_session = pytest.mark.usefixtures("override_get_db")
@@ -131,22 +138,17 @@ def test_viewer_cannot_upsert_onboarding(db_session) -> None:
 
 
 @uses_test_session
-def test_complete_fails_with_missing_fields_listed(db_session) -> None:
+def test_complete_succeeds_with_no_fields_filled(db_session) -> None:
+    """OnboardingResponse's fixed fields are optional enrichment now, not a
+    completion gate — a brand can finish onboarding having answered none of
+    them directly, with Aarav's dynamic phase (OnboardingDynamicAnswer)
+    covering the same ground instead. See OnboardingResponse's docstring."""
     brand, user = _setup_brand(db_session)
-    client.put(
-        f"/brands/{brand.id}/onboarding",
-        json={"voice": "Playful", "audience": "Gen Z"},
-        headers=_auth_headers(user),
-    )
 
     response = client.post(f"/brands/{brand.id}/onboarding/complete", headers=_auth_headers(user))
 
-    assert response.status_code == 400
-    detail = response.json()["message"]
-    assert "product_catalog" in detail
-    assert "competitors" in detail
-    assert "goals" in detail
-    assert "voice" not in detail  # already filled, shouldn't be listed as missing
+    assert response.status_code == 200
+    assert response.json()["is_complete"] is True
 
 
 @uses_test_session
@@ -226,7 +228,7 @@ def test_run_agent_runs_research_then_graph_and_returns_brand_with_report(db_ses
     with patch("apps.api.routers.onboarding.run_onboarding_research") as mock_research, patch(
         "apps.api.routers.onboarding.run_onboarding_agent"
     ) as mock_agent, patch("apps.api.routers.onboarding.embed_brand_report") as mock_embed:
-        mock_agent.side_effect = lambda db, brand_arg, response_arg, research_arg: (
+        mock_agent.side_effect = lambda db, brand_arg, response_arg, research_arg, dynamic_qa=None: (
             setattr(brand_arg, "brand_report", report)
         )
         response = client.post(f"/brands/{brand.id}/onboarding/run-agent", headers=headers)
@@ -236,6 +238,52 @@ def test_run_agent_runs_research_then_graph_and_returns_brand_with_report(db_ses
     mock_research.assert_called_once()
     mock_agent.assert_called_once()
     mock_embed.assert_called_once()
+
+
+@uses_test_session
+def test_run_agent_passes_dynamic_qa_history_to_synthesis(db_session) -> None:
+    """Issue #158 — Aarav's adaptive follow-up Q&A (Issue #153) must reach
+    onboarding synthesis, not just the fixed questionnaire."""
+    brand, user = _setup_brand(db_session)
+    headers = _auth_headers(user)
+    full_payload = {
+        "voice": "Playful",
+        "audience": "Gen Z",
+        "product_catalog": {"items": ["A"]},
+        "competitors": ["X"],
+        "goals": ["Grow"],
+    }
+    client.put(f"/brands/{brand.id}/onboarding", json=full_payload, headers=headers)
+    client.post(f"/brands/{brand.id}/onboarding/complete", headers=headers)
+
+    db_session.add(
+        OnboardingDynamicAnswer(
+            brand_id=brand.id,
+            page_index=1,
+            question={"id": "integrations", "title": "What tools does Acme integrate with?"},
+            answer="QuickBooks and Stripe",
+        )
+    )
+    db_session.flush()
+
+    with patch("apps.api.routers.onboarding.run_onboarding_research"), patch(
+        "apps.api.routers.onboarding.run_onboarding_agent"
+    ) as mock_agent, patch("apps.api.routers.onboarding.embed_brand_report"):
+        response = client.post(f"/brands/{brand.id}/onboarding/run-agent", headers=headers)
+
+    assert response.status_code == 200
+    _args, kwargs = mock_agent.call_args
+    assert kwargs["dynamic_qa"] == [
+        {
+            "page_index": 1,
+            "answers": [
+                {
+                    "question": {"id": "integrations", "title": "What tools does Acme integrate with?"},
+                    "answer": "QuickBooks and Stripe",
+                }
+            ],
+        }
+    ]
 
 
 @uses_test_session
@@ -297,6 +345,7 @@ def test_research_stream_emits_extracted_event_when_brand_has_a_website(db_sessi
             website_summary="Acme Widgets makes durable widgets.",
             website_logo_url="https://storage.test/scraped-logo.png",
             website_colors=["#1b4dff"],
+            website_social_links={"instagram": "https://instagram.com/acme"},
         )
         db.add(research)
         db.flush()
@@ -315,6 +364,7 @@ def test_research_stream_emits_extracted_event_when_brand_has_a_website(db_sessi
     assert "event: extracted" in body
     assert "scraped-logo.png" in body
     assert '"colors": ["#1b4dff"]' in body
+    assert "instagram.com/acme" in body
     assert "event: done" in body
 
 
@@ -436,6 +486,35 @@ def test_voice_answer_transcribes_and_stores_audio(db_session) -> None:
     listed = client.get(f"/brands/{brand.id}/onboarding/voice-answers", headers=_auth_headers(user))
     assert listed.status_code == 200
     assert len(listed.json()) == 1
+
+
+@uses_test_session
+def test_voice_answer_survives_storage_outage(db_session) -> None:
+    """A StorageProvider failure re-hosting the raw audio must not cost the
+    brand a transcript that already succeeded — regression test for a real
+    bug where this endpoint raised straight through a successful
+    transcription and lost it."""
+    brand, user = _setup_brand(db_session)
+
+    fake_speech = MagicMock()
+    fake_speech.transcribe.return_value = _FakeTranscription("We sell widgets to small businesses.")
+    fake_storage = MagicMock()
+    fake_storage.upload.side_effect = ConnectionError("storage unreachable")
+
+    with patch(_SPEECH_PATCH_TARGET, return_value=fake_speech), patch(
+        _STORAGE_PATCH_TARGET, return_value=fake_storage
+    ):
+        response = client.post(
+            f"/brands/{brand.id}/onboarding/voice-answers",
+            data={"question_id": "audience"},
+            files={"file": ("answer.webm", b"fake-audio-bytes", "audio/webm")},
+            headers=_auth_headers(user),
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["transcript"] == "We sell widgets to small businesses."
+    assert body["audio_url"] is None
 
 
 @uses_test_session
@@ -584,15 +663,15 @@ def test_next_questions_persists_submitted_answers(db_session) -> None:
 
 @uses_test_session
 def test_next_questions_hard_caps_without_calling_llm(db_session) -> None:
-    """page_index=4 (MAX_DYNAMIC_PAGES) means the next page would be 5,
-    past the cap — generate_next_page must short-circuit before ever
-    reaching the LLM provider."""
+    """page_index=MAX_DYNAMIC_PAGES means the next page would be past the
+    cap — generate_next_page must short-circuit before ever reaching the
+    LLM provider."""
     brand, user = _setup_brand(db_session)
 
     with patch(_DYNAMIC_LLM_PATCH_TARGET) as mock_get_llm:
         response = client.post(
             f"/brands/{brand.id}/onboarding/next-questions",
-            json={"page_index": 4, "answers": []},
+            json={"page_index": MAX_DYNAMIC_PAGES, "answers": []},
             headers=_auth_headers(user),
         )
 

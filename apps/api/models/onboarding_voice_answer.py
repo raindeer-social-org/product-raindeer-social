@@ -28,7 +28,10 @@ class OnboardingVoiceAnswer(Base):
 
     question_id: Mapped[str] = mapped_column(String, nullable=False)
     transcript: Mapped[str] = mapped_column(nullable=False)
-    audio_url: Mapped[str] = mapped_column(nullable=False)
+    # Nullable: re-hosting the raw recording is best-effort (see
+    # create_voice_answer) — a storage outage must never cost the brand a
+    # transcript that already succeeded.
+    audio_url: Mapped[str | None] = mapped_column(nullable=True)
     language: Mapped[str | None] = mapped_column(String, nullable=True)
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
 

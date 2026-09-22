@@ -12,6 +12,7 @@ from apps.api.middleware.rbac import require_role
 from apps.api.models import Brand, UserRole
 from apps.api.schemas.brand import BrandCreate, BrandRead, BrandReportExport, BrandUpdate
 from apps.api.services.brand_report_pdf import render_brand_report_pdf
+from packages.agents.onboarding.embedding import embed_brand_report
 from packages.integrations.registry import get_storage_provider
 
 router = APIRouter(prefix="/brands", tags=["brands"])
@@ -96,9 +97,16 @@ def update_brand(
     current_user: CurrentUser = Depends(require_role(*WRITE_ROLES)),
 ) -> Brand:
     brand = _get_org_brand(db, brand_id, current_user.org_id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    fields = payload.model_dump(exclude_unset=True)
+    for field, value in fields.items():
         setattr(brand, field, value)
     db.flush()
+    if "brand_report" in fields:
+        # Issue #158 — an edit from the onboarding capstone (or any other
+        # future editor of brand_report) must re-embed, same as
+        # run_onboarding_agent does on every fresh synthesis, or Ved/Neer's
+        # RAG retrieval (brand_retrieval.py) keeps serving stale chunks.
+        embed_brand_report(db, brand)
     db.refresh(brand)
     return brand
 

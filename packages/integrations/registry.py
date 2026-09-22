@@ -34,7 +34,7 @@ _SEARCH_PROVIDERS = {
 
 _LLM_PROVIDERS = {
     "openrouter": lambda settings: OpenRouterProvider(
-        api_key=settings.openrouter_api_key or ""
+        api_keys=settings.openrouter_api_key_pool
     ),
     "openai": lambda settings: OpenAIProvider(api_key=settings.openai_api_key or ""),
 }

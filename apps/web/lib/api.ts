@@ -50,8 +50,11 @@ export interface BrandInput {
 }
 
 // Mirrors apps/api/schemas/brand.py::BrandUpdate — every field optional,
-// PATCH-style (only fields present are changed server-side).
-export type BrandUpdateInput = Partial<BrandInput>;
+// PATCH-style (only fields present are changed server-side). brand_report
+// isn't settable at creation (BrandCreate has no such field) but IS
+// editable afterward — Issue #158's onboarding capstone screen is the
+// first caller — so it's added here rather than on BrandInput.
+export type BrandUpdateInput = Partial<BrandInput> & { brand_report?: Record<string, unknown> | null };
 
 // Mirrors apps/api/models/content_calendar_event.py::CalendarEventStatus.
 export type CalendarEventStatus =
@@ -820,7 +823,7 @@ export interface OnboardingVoiceAnswer {
   brand_id: string;
   question_id: string;
   transcript: string;
-  audio_url: string;
+  audio_url: string | null;
   language: string | null;
   duration_seconds: number | null;
   created_at: string;
@@ -936,6 +939,10 @@ export interface ExtractedBrandKit {
   logoUrl: string | null;
   colors: string[];
   summary: string | null;
+  // Platform -> profile URL found on the brand's own site (footer/header
+  // icons, "follow us" links) — real signal Aarav surfaces, not scraped
+  // further. See packages/integrations/webscrape's _find_social_links.
+  socialLinks: Record<string, string>;
 }
 
 // Reads the onboarding research-preview SSE stream (Issue #123's Aarav

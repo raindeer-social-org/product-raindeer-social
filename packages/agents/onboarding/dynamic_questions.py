@@ -130,10 +130,28 @@ repeat something already known above) as:
     "options": ["<only for chips/select>", "..."] }}
 ]}}
 
-`options` is required (2-6 short choices) for "chips"/"select" and must be
-omitted or null for "text"/"voice". Every `id` must be unique within this
-page. Respond with ONLY the JSON object. No markdown code fences, no extra
-text.
+**Default to "chips" or "select", not "text".** A brand founder answering
+on their phone should be able to tap an answer in one second, not compose a
+paragraph — every question you ask should be answerable by picking from
+options you already wrote for them, not by describing something in their
+own words. Write 3-6 CONCRETE, SPECIFIC, mutually-distinct options per
+question, grounded in what you already know about this brand (its
+industry, its competitors, its own words from the scrape) — never generic
+placeholders like "Option A" or vague ranges like "A little" / "A lot".
+Use "select" when exactly one answer makes sense (a stage, a scale, a
+single choice among alternatives) and "chips" when several can apply at
+once (a set of channels, a set of pain points). Reach for "text" ONLY when
+the honest answer is a specific proper noun, number, or short phrase you
+could not plausibly enumerate in advance (a product name, a dollar figure,
+a competitor you don't already know) — and even then, prefer phrasing the
+question so a short chip-pickable answer would still make sense if you can.
+Reach for "voice" only when you're deliberately inviting an open, in-their-
+own-words answer (tone, story, personality) where forcing multiple choice
+would flatten something worth hearing in full — use it sparingly, not as a
+default.
+
+Every `id` must be unique within this page. Respond with ONLY the JSON
+object. No markdown code fences, no extra text.
 """
 
 

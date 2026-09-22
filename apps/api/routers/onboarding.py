@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from collections.abc import Generator
 
@@ -14,6 +15,7 @@ from apps.api.models import (
     Brand,
     OnboardingAsset,
     OnboardingDynamicAnswer,
+    OnboardingResearch,
     OnboardingResponse,
     OnboardingVoiceAnswer,
     UserRole,
@@ -36,6 +38,8 @@ from packages.agents.onboarding.research_step import (
     search_brand_overview,
 )
 from packages.integrations.registry import get_speech_provider, get_storage_provider
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/brands/{brand_id}/onboarding", tags=["onboarding"])
 
@@ -64,6 +68,30 @@ def _get_response_or_404(db: Session, brand_id: uuid.UUID) -> OnboardingResponse
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Onboarding not started for this brand",
         )
+    return response
+
+
+def _get_or_create_response(db: Session, brand_id: uuid.UUID) -> OnboardingResponse:
+    """Same lookup as _get_response_or_404, but creates an empty row
+    instead of 404ing when none exists yet. The fixed "essentials" page
+    that used to be the only thing guaranteed to create this row via
+    upsert_onboarding has been removed — voice/audience/product/
+    competitors/goals are now collected through Aarav's dynamic phase
+    instead, so a brand can legitimately reach /complete or /run-agent
+    having never called PUT .../onboarding at all. Every reader of
+    OnboardingResponse's fields already treats them as optional
+    (build_synthesis_prompt's _known_answers_block, generate_next_page's
+    prompt, etc.), so an empty row is a safe, real "nothing answered here"
+    state, not a workaround."""
+    response = (
+        db.query(OnboardingResponse)
+        .filter(OnboardingResponse.brand_id == brand_id)
+        .first()
+    )
+    if response is None:
+        response = OnboardingResponse(brand_id=brand_id)
+        db.add(response)
+        db.flush()
     return response
 
 
@@ -114,18 +142,16 @@ def complete_onboarding(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(require_role(*WRITE_ROLES)),
 ) -> OnboardingResponse:
-    """The gate the onboarding agent (Issue #15) checks before it can run —
-    fails loudly with exactly what's missing rather than letting the agent
-    start against incomplete data."""
+    """Marks onboarding complete so /run-agent is allowed to run. No
+    longer gates on OnboardingResponse.missing_required_fields(): that
+    check made sense when voice/audience/product/competitors/goals were
+    collected through a fixed form (the old "essentials" page) that was
+    the only path to filling them, but they're now collected through
+    Aarav's own dynamic questions instead — whether there's "enough" to
+    write good marketing from is Aarav's own call (generate_next_page
+    reporting done=True), not a fixed-field checklist here."""
     _get_org_brand(db, brand_id, current_user.org_id)
-    response = _get_response_or_404(db, brand_id)
-
-    missing = response.missing_required_fields()
-    if missing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot complete onboarding — missing required fields: {', '.join(missing)}",
-        )
+    response = _get_or_create_response(db, brand_id)
 
     response.is_complete = True
     db.flush()
@@ -201,11 +227,17 @@ def stream_research_preview(
                     # `research.website_*` after either would raise
                     # DetachedInstanceError (see event_stream's docstring
                     # note above for the same failure mode on `brand`).
-                    if research.website_summary or research.website_logo_url or research.website_colors:
+                    if (
+                        research.website_summary
+                        or research.website_logo_url
+                        or research.website_colors
+                        or research.website_social_links
+                    ):
                         extracted = {
                             "logo_url": research.website_logo_url,
                             "colors": research.website_colors or [],
                             "summary": research.website_summary,
+                            "social_links": research.website_social_links or {},
                         }
                 stream_db.commit()
             except Exception:
@@ -236,7 +268,7 @@ def run_agent(
     Brand row. Requires onboarding to already be complete — the agent
     reads questionnaire answers that may still be missing otherwise."""
     brand = _get_org_brand(db, brand_id, current_user.org_id)
-    response = _get_response_or_404(db, brand_id)
+    response = _get_or_create_response(db, brand_id)
 
     if not response.is_complete:
         raise HTTPException(
@@ -245,7 +277,8 @@ def run_agent(
         )
 
     research = run_onboarding_research(db, brand, response)
-    run_onboarding_agent(db, brand, response, research)
+    dynamic_qa = _prior_dynamic_pages(db, brand_id)
+    run_onboarding_agent(db, brand, response, research, dynamic_qa=dynamic_qa)
     # Re-embeds on every completion/update of brand_report — embed_brand_report
     # replaces this brand's existing chunks rather than appending to them.
     embed_brand_report(db, brand)
@@ -272,16 +305,31 @@ def create_voice_answer(
     transcript — "everything voice" persisted, not discarded once read.
     Every take is appended as its own row (see OnboardingVoiceAnswer's
     docstring) rather than overwriting a prior recording for the same
-    question."""
+    question.
+
+    Re-hosting the raw audio is best-effort: a StorageProvider outage must
+    never cost the brand a transcript that already succeeded (a real bug —
+    this used to raise straight through a successful transcription and
+    lose it), so audio_url just comes back None rather than the whole
+    request failing."""
     brand = _get_org_brand(db, brand_id, current_user.org_id)
     audio_bytes = file.file.read()
     content_type = file.content_type or "audio/webm"
 
     result = get_speech_provider().transcribe(audio_bytes, content_type)
 
-    extension = content_type.split("/")[-1].split(";")[0] or "webm"
-    path = f"onboarding/{brand.id}/voice/{question_id}/{uuid.uuid4().hex}.{extension}"
-    audio_url = get_storage_provider().upload(path, audio_bytes, content_type)
+    audio_url: str | None = None
+    try:
+        extension = content_type.split("/")[-1].split(";")[0] or "webm"
+        path = f"onboarding/{brand.id}/voice/{question_id}/{uuid.uuid4().hex}.{extension}"
+        audio_url = get_storage_provider().upload(path, audio_bytes, content_type)
+    except Exception:
+        logger.warning(
+            "Onboarding voice-answer audio re-hosting failed for brand=%s question=%r",
+            brand.id,
+            question_id,
+            exc_info=True,
+        )
 
     answer = OnboardingVoiceAnswer(
         brand_id=brand.id,
@@ -425,10 +473,21 @@ def next_questions(
         .filter(OnboardingResponse.brand_id == brand_id)
         .first()
     )
+    research = (
+        db.query(OnboardingResearch)
+        .filter(OnboardingResearch.brand_id == brand_id)
+        .first()
+    )
     prior_pages = _prior_dynamic_pages(db, brand_id)
     next_page_index = payload.page_index + 1
 
-    done, questions = generate_next_page(brand, response, prior_pages, next_page_index)
+    done, questions = generate_next_page(
+        brand,
+        response,
+        prior_pages,
+        next_page_index,
+        scrape_summary=research.website_summary if research else None,
+    )
 
     if done:
         return NextQuestionsResponse(done=True, page_index=0, questions=[])

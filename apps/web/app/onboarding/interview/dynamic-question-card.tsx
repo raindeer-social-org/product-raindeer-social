@@ -4,6 +4,10 @@
 // adaptive half of the interview that runs after the fixed QUESTIONS
 // array in page.tsx. Self-contained (including its own voice recorder)
 // so it doesn't need to touch page.tsx's static-question state at all.
+// Every free-text question (whether Aarav tagged it "text" or "voice")
+// gets the same voice-first DynamicVoiceAnswer widget, with typing always
+// one tap away — a brand shouldn't have to hope Aarav happened to pick
+// "voice" to answer by speaking.
 
 import { useRef, useState } from "react";
 import { ApiError, transcribeOnboardingVoiceAnswer, type DynamicQuestion } from "@/lib/api";
@@ -180,16 +184,7 @@ export function DynamicQuestionCard({
         </div>
       )}
 
-      {question.type === "text" && (
-        <textarea
-          value={typeof value === "string" ? value : ""}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="Type your answer — Aarav reads tone, not just words."
-          className="h-[110px] w-full resize-none rounded-[13px] border border-line bg-white p-3.5 text-sm leading-relaxed outline-none focus:border-brand-500"
-        />
-      )}
-
-      {question.type === "voice" && (
+      {(question.type === "text" || question.type === "voice") && (
         <DynamicVoiceAnswer
           question={question}
           value={typeof value === "string" ? value : ""}

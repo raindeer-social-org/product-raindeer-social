@@ -16,6 +16,14 @@ class ScrapeResult:
     logo_bytes: bytes | None = None
     logo_content_type: str | None = None
     colors: list[str] = field(default_factory=list)
+    # Social profile links found on the page (e.g. footer/header icons
+    # linking out to the brand's other public profiles), deduplicated by
+    # platform, first match wins. This repo doesn't attempt to scrape
+    # *those* pages directly (most require auth or actively block
+    # unauthenticated scraping) — surfacing the links themselves is real,
+    # honest signal Aarav can reference and the brand can later connect
+    # for real via the existing OAuth flows (packages/integrations/social).
+    social_links: dict[str, str] = field(default_factory=dict)
 
 
 class WebScrapeProvider(ABC):

@@ -17,6 +17,24 @@ MAX_TEXT_CHARS = 8000
 MAX_COLORS = 5
 _USER_AGENT = "RaindeerSocial-Aarav/1.0 (+onboarding brand scan; respects robots via a single fetch)"
 
+# Recognized social platforms for link detection, keyed by the domain
+# fragment to match against an <a href>, valued by the canonical platform
+# name used elsewhere in this repo (matches packages/integrations/social's
+# provider names where one exists, e.g. "linkedin"/"x"/"instagram", plus a
+# few this repo doesn't have a publishing adapter for yet — still useful
+# as a brand-identity signal even without one).
+_SOCIAL_DOMAINS = {
+    "linkedin.com": "linkedin",
+    "instagram.com": "instagram",
+    "threads.net": "threads",
+    "facebook.com": "facebook",
+    "youtube.com": "youtube",
+    "tiktok.com": "tiktok",
+    "pinterest.com": "pinterest",
+    "twitter.com": "x",
+    "x.com": "x",
+}
+
 
 class HttpxWebScrapeProvider(WebScrapeProvider):
     """Free, dependency-light website scraper — plain httpx + BeautifulSoup
@@ -51,6 +69,8 @@ class HttpxWebScrapeProvider(WebScrapeProvider):
             if logo_bytes:
                 colors = _extract_palette(logo_bytes)
 
+        social_links = _find_social_links(soup, final_url)
+
         return ScrapeResult(
             url=final_url,
             title=title,
@@ -60,6 +80,7 @@ class HttpxWebScrapeProvider(WebScrapeProvider):
             logo_bytes=logo_bytes,
             logo_content_type=logo_content_type,
             colors=colors,
+            social_links=social_links,
         )
 
 
@@ -91,6 +112,32 @@ def _favicon_url(soup: BeautifulSoup, base_url: str) -> str | None:
     # serve — a 404 here is caught by _fetch_image_safely, not here.
     parsed = urlparse(base_url)
     return f"{parsed.scheme}://{parsed.netloc}/favicon.ico"
+
+
+def _find_social_links(soup: BeautifulSoup, base_url: str) -> dict[str, str]:
+    """Scans every <a href> on the page for a known social-platform domain
+    (header/footer icon links, "follow us" sections, etc.) — the first
+    match per platform wins. Deliberately does not follow or scrape these
+    links (most social platforms require auth or actively block
+    unauthenticated scraping); this is just honest surfacing of what the
+    brand's own site already links to."""
+    found: dict[str, str] = {}
+    own_netloc = urlparse(base_url).netloc.lower()
+    for tag in soup.find_all("a", href=True):
+        href = tag["href"].strip()
+        if not href or href.startswith("#"):
+            continue
+        resolved = urljoin(base_url, href)
+        netloc = urlparse(resolved).netloc.lower().removeprefix("www.")
+        if netloc == own_netloc:
+            continue
+        for domain, platform in _SOCIAL_DOMAINS.items():
+            if platform in found:
+                continue
+            if netloc == domain or netloc.endswith(f".{domain}"):
+                found[platform] = resolved
+                break
+    return found
 
 
 def _visible_text(soup: BeautifulSoup) -> str:

@@ -125,11 +125,12 @@ half is independent and can land anytime.**
   agent with zero direct brand grounding, only ever seeing Keshav's brief.
 
 ### Phase D — polish
-**Status: not started.**
+**Status: partially done (see #167 in the progress log).**
 
-- Voice input as an answer method on more/all question types, not just the
+- ~~Voice input as an answer method on more/all question types, not just the
   one `"voice"`-typed question — reuse the issue #144 recording+transcribe
-  plumbing, don't rebuild it.
+  plumbing, don't rebuild it.~~ Done in #167 — every free-text dynamic
+  question gets the voice-first widget now, not just `"voice"`-typed ones.
 - Asset library page: uploads beyond the 4 fixed slots from issue #144
   (reuse `OnboardingAsset`, just don't cap it at 4 named slots).
 - Security pass on every new endpoint from A/B/C: confirm org-scoping via
@@ -162,3 +163,37 @@ half is independent and can land anytime.**
 - **2026-09-20** — Plan written. Audited current state (see brand/README.md).
   No implementation started yet. About to open issues + dispatch Phase A and
   Phase B in parallel.
+- **2026-09-21** — Phases A/B/C landed (#152/#153/#158/#156). Issue #164 then
+  cut the fixed-page flow from the original multi-page questionnaire down to
+  2 pages (scrape+colors, then a consolidated "essentials" page) before
+  Aarav's dynamic phase takes over — PR #165.
+- **2026-09-22** — Issue #167: user feedback was that even 2 fixed pages was
+  "too much preloaded question." Removed the "essentials" page entirely —
+  **exactly 1 fixed page now** (confirm website + brand colors), everything
+  else (voice/goals/audience/product/competitors) folded into Aarav's own
+  adaptive dynamic-question phase. `OnboardingResponse`'s fixed fields are
+  now optional enrichment only (`REQUIRED_FIELDS`/`missing_required_fields()`
+  removed — `/complete` no longer gates on them); `MAX_DYNAMIC_PAGES` raised
+  4 → 10 to give the dynamic phase real room. Also this round:
+  - Every free-text dynamic question (not just ones Aarav tags `"voice"`)
+    now gets the voice-first `DynamicVoiceAnswer` widget — addresses
+    "multiple audio based question" from user feedback.
+  - **Real bug fixed:** `POST .../voice-answers` lost an already-successful
+    Whisper transcription whenever the storage re-host step failed (no
+    try/except around it) — this is what "voice transcription isn't
+    working" actually was, not a transcription bug. `audio_url` is now
+    nullable and the re-host is best-effort, matching `_rehost_logo`'s
+    pattern.
+  - Website scrape now also surfaces social profile links found on the
+    brand's own site (`OnboardingResearch.website_social_links`) as
+    clickable badges — real, honest signal; not scraped further (most
+    platforms block/auth-wall unauthenticated scraping).
+  - Fixed an unrelated pre-existing bug: `/next-questions` never actually
+    passed the website scrape summary into `generate_next_page`.
+  - **Still blocked, not fixed here:** logo/asset *uploads* — external
+    Supabase DNS outage (`eejnsuxngpsuuxzshqdm.supabase.co` NXDOMAIN), user
+    investigating independently. This is infrastructure, not app code.
+  - **Not yet done:** broader UI/UX polish pass beyond what's described
+    above (user asked for "the BEST UI and UX" broadly, not just this
+    round's specific fixes) — worth a dedicated follow-up pass once
+    Supabase is back and uploads can be tested end-to-end.

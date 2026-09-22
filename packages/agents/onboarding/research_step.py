@@ -137,9 +137,20 @@ def run_website_scrape(db: Session, brand: Brand, url: str | None = None) -> Onb
         logger.warning("Onboarding website scrape failed for brand=%s url=%r", brand.id, target_url, exc_info=True)
         return research
 
-    research.website_summary = _summarize_scrape(brand.name, scrape)
+    summary = _summarize_scrape(brand.name, scrape)
+    if scrape.social_links:
+        # Appended deterministically rather than fed into the LLM prompt —
+        # this is a plain fact (a link either exists on the page or it
+        # doesn't), not something worth risking the summarization call
+        # inventing or dropping.
+        platforms = ", ".join(sorted(scrape.social_links))
+        social_note = f"Also links to {platforms} from its own site."
+        summary = f"{summary} {social_note}".strip() if summary else social_note
+
+    research.website_summary = summary
     research.website_logo_url = _rehost_logo(brand.id, scrape)
     research.website_colors = scrape.colors or None
+    research.website_social_links = scrape.social_links or None
     db.flush()
     db.refresh(research)
     return research

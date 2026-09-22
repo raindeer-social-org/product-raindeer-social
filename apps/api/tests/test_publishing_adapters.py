@@ -44,6 +44,14 @@ ALLOWED_FILES = {
     "youtube_provider.py",
     "tiktok_provider.py",
     "pinterest_provider.py",
+    # Not a publishing adapter — passively matches a scraped page's own
+    # <a href> links against these domains to label them by platform (see
+    # _find_social_links in packages/integrations/webscrape/httpx_provider.py).
+    # Never calls any vendor API, so it's exempt from "only the matching
+    # provider talks to this vendor" below. (Not adding bare "base.py" here
+    # — this check matches by filename only, and several unrelated
+    # integrations have their own base.py.)
+    "httpx_provider.py",
 }
 
 

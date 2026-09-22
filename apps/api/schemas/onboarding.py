@@ -41,7 +41,7 @@ class OnboardingVoiceAnswerRead(BaseModel):
     brand_id: uuid.UUID
     question_id: str
     transcript: str
-    audio_url: str
+    audio_url: str | None
     language: str | None
     duration_seconds: float | None
     created_at: datetime

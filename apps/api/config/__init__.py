@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
     openrouter_api_key: str | None = None
+    # Comma-separated pool of additional OpenRouter keys — each free-tier
+    # key carries its own independent 50-requests/day cap, so spreading
+    # calls across several keys multiplies effective daily capacity rather
+    # than everything sharing openrouter_api_key's single limit. Purely
+    # additive: openrouter_api_key (if set) is always included in the pool
+    # too, see Settings.openrouter_api_key_pool below.
+    openrouter_api_keys: str | None = None
     tavily_api_key: str | None = None
     fal_api_key: str | None = None
 
@@ -147,6 +154,23 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def openrouter_api_key_pool(self) -> list[str]:
+        """Every configured OpenRouter key, deduplicated, primary key
+        first — the shape OpenRouterProvider needs to rotate across keys.
+        `openrouter_api_key` (singular) always comes first when set, so
+        existing single-key setups keep behaving exactly as before;
+        `openrouter_api_keys` (comma-separated) is purely additive."""
+        keys = [self.openrouter_api_key] if self.openrouter_api_key else []
+        keys += [k.strip() for k in (self.openrouter_api_keys or "").split(",") if k.strip()]
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for key in keys:
+            if key not in seen:
+                seen.add(key)
+                deduped.append(key)
+        return deduped
 
 
 @lru_cache
