@@ -1,8 +1,8 @@
 "use client";
 
 // A small, cute, always-alive stand-in for Aarav himself — the visual
-// centerpiece of the interview's left rail (see interview-split-layout.tsx).
-// Built entirely from CSS/SVG + Framer Motion (no 3D engine/model — this repo
+// centerpiece of the interview shell (see interview-shell.tsx). Built
+// entirely from CSS/SVG + Framer Motion (no 3D engine/model — this repo
 // has no Three.js dependency and one isn't worth adding for a single
 // mascot); depth comes from layered gradients, a soft ground shadow that
 // breathes with the float animation, and a blurred ambient glow behind it,
@@ -69,25 +69,49 @@ export function AaravCompanion({
   mood,
   caption,
   size = "lg",
+  dark = true,
 }: {
   mood: AaravMood;
   /** Overrides the mood's default caption — e.g. the live scrape-log line. */
   caption?: string | null;
   size?: "md" | "lg";
+  /** Whether this sits on a dark panel (white caption text) or a light
+   * glass card (ink-toned caption text). */
+  dark?: boolean;
 }) {
   const prefersReducedMotion = useReducedMotion();
-  const dim = size === "lg" ? 208 : 152;
+  const dim = size === "lg" ? 208 : 168;
   const shownCaption = caption ?? DEFAULT_CAPTION[mood];
 
   return (
     <div className="relative flex flex-col items-center justify-center">
-      <div className="relative flex items-center justify-center" style={{ width: dim * 1.5, height: dim * 1.35 }}>
+      <div className="relative flex items-center justify-center" style={{ width: dim * 1.5, height: dim * 1.3 }}>
         {/* ambient glow */}
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 rounded-full opacity-80 blur-3xl"
           style={{ background: "radial-gradient(circle at 50% 42%, rgba(143,196,255,.5), transparent 65%)" }}
         />
+
+        {/* slow-rotating conic halo ring — the one "sci-fi tech" flourish
+        that reads as modern rather than a flat static icon */}
+        {!prefersReducedMotion ? (
+          <motion.div
+            aria-hidden="true"
+            className="pointer-events-none absolute rounded-full opacity-[0.35]"
+            style={{
+              width: dim * 1.18,
+              height: dim * 1.18,
+              background:
+                "conic-gradient(from 0deg, transparent 0%, #8FC4FF 15%, transparent 30%, transparent 60%, #6B32C9 75%, transparent 92%)",
+              maskImage: "radial-gradient(closest-side, transparent 76%, black 78%, black 86%, transparent 88%)",
+              WebkitMaskImage:
+                "radial-gradient(closest-side, transparent 76%, black 78%, black 86%, transparent 88%)",
+            }}
+            animate={{ rotate: 360 }}
+            transition={{ duration: mood === "thinking" ? 5 : 14, repeat: Infinity, ease: "linear" }}
+          />
+        ) : null}
 
         {/* thought particles, only while thinking */}
         {mood === "thinking" && !prefersReducedMotion ? (
@@ -169,7 +193,13 @@ export function AaravCompanion({
 
           {/* head/body */}
           <div className="h-full w-full rounded-[34%] border border-white/70 bg-gradient-to-br from-[#EAF1FF] via-white to-[#DCE7FF] shadow-[0_24px_46px_-20px_rgba(27,77,255,.5)]">
-            <div className="absolute inset-[9%] rounded-[30%] bg-gradient-to-br from-brand-600 via-[#6B32C9] to-[#8FC4FF]" />
+            <div className="absolute inset-[9%] overflow-hidden rounded-[30%] bg-gradient-to-br from-brand-600 via-[#6B32C9] to-[#8FC4FF]">
+              {/* glossy highlight — the "premium glass" touch */}
+              <div
+                aria-hidden="true"
+                className="absolute -left-[10%] -top-[18%] h-[65%] w-[65%] rounded-full bg-white opacity-30 blur-2xl"
+              />
+            </div>
             <div className="absolute inset-[19%] flex items-center justify-center overflow-hidden rounded-[38%] bg-[#0A1633]">
               <div className="flex items-center gap-[22%]">
                 <Eye mood={mood} />
@@ -195,7 +225,10 @@ export function AaravCompanion({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
-          className="max-w-[240px] text-center text-[13px] font-medium leading-snug text-white/90"
+          className={
+            "max-w-[240px] text-center text-[13px] font-medium leading-snug " +
+            (dark ? "text-white/90" : "text-ink-500")
+          }
         >
           {shownCaption}
         </motion.p>

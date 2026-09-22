@@ -27,7 +27,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { BrandIdentityCapstone } from "./brand-identity-capstone";
 import { SocialConnectionsPanel } from "@/app/social-accounts/social-connections-panel";
 import { DynamicQuestionCard } from "./dynamic-question-card";
-import { InterviewSplitLayout } from "./interview-split-layout";
+import { InterviewShell } from "./interview-shell";
 import type { AaravMood } from "./aarav-companion";
 
 const PRESET_COLORS = ["#1B4DFF", "#0A1633", "#0E7A4E", "#B46A00", "#6B32C9", "#C9295A"];
@@ -475,7 +475,7 @@ export default function OnboardingInterviewPage() {
             : `Page ${dynamicPageIndex || 1} of up to ${MAX_DYNAMIC_PAGES} — tailored to what you've told me.`;
 
     return (
-      <InterviewSplitLayout mood={mood} caption={caption} stepLabel="STEP 2 OF 4 · ASKING SOMETHING NEW">
+      <InterviewShell mood={mood} caption={caption} stepLabel="STEP 2 OF 4 · ASKING SOMETHING NEW">
         <div style={{ perspective: 1200 }}>
           <AnimatePresence mode="wait">
             {isLoadingScreen ? (
@@ -555,7 +555,7 @@ export default function OnboardingInterviewPage() {
             )}
           </AnimatePresence>
         </div>
-      </InterviewSplitLayout>
+      </InterviewShell>
     );
   }
 
@@ -564,7 +564,7 @@ export default function OnboardingInterviewPage() {
     // done — deliberately not the fixed page nor part of the dynamic
     // phase, since it isn't really a *question* at all.
     return (
-      <InterviewSplitLayout
+      <InterviewShell
         mood={isFinishingInterview ? "thinking" : "happy"}
         caption={isFinishingInterview ? "Putting together your brand identity…" : "Almost done — anything else to add?"}
         stepLabel="ALMOST DONE"
@@ -638,13 +638,13 @@ export default function OnboardingInterviewPage() {
             </div>
           </div>
         </div>
-      </InterviewSplitLayout>
+      </InterviewShell>
     );
   }
 
   if (stage === "capstone" && brandReportDraft) {
     return (
-      <InterviewSplitLayout mood="happy" caption="Here's what I learned." stepLabel="STEP 3 OF 4 · BRAND IDENTITY">
+      <InterviewShell mood="happy" caption="Here's what I learned." stepLabel="STEP 3 OF 4 · BRAND IDENTITY">
         <div>
           <h1 className="mb-1.5 text-[32px] font-bold leading-[1.12] tracking-tight text-ink-950">
             Here&apos;s what Aarav learned
@@ -660,13 +660,13 @@ export default function OnboardingInterviewPage() {
             onContinue={saveCapstoneAndConnect}
           />
         </div>
-      </InterviewSplitLayout>
+      </InterviewShell>
     );
   }
 
   if (stage === "connect") {
     return (
-      <InterviewSplitLayout mood="happy" caption="All set — let's get you connected." stepLabel="STEP 4 OF 4 · DISTRIBUTION">
+      <InterviewShell mood="happy" caption="All set — let's get you connected." stepLabel="STEP 4 OF 4 · DISTRIBUTION">
         <div className="max-w-[720px]">
           <h1 className="mb-1.5 text-[32px] font-bold leading-[1.12] tracking-tight text-ink-950">
             Connect where you publish
@@ -686,7 +686,7 @@ export default function OnboardingInterviewPage() {
             <Button onClick={() => router.push("/")}>Enter Raindeer</Button>
           </div>
         </div>
-      </InterviewSplitLayout>
+      </InterviewShell>
     );
   }
 
@@ -699,7 +699,7 @@ export default function OnboardingInterviewPage() {
   const questionsCaption = isScraping ? lastLogLine : scrapeDone ? "Found some good signal — take a look." : undefined;
 
   return (
-    <InterviewSplitLayout mood={questionsMood} caption={questionsCaption} stepLabel="STEP 1 OF 4 · WEBSITE & BRAND KIT">
+    <InterviewShell mood={questionsMood} caption={questionsCaption} stepLabel="STEP 1 OF 4 · WEBSITE & BRAND KIT">
       <div>
         <div className="mb-4 flex items-center justify-between gap-3">
           <p className="text-xs text-ink-300">
@@ -932,6 +932,6 @@ export default function OnboardingInterviewPage() {
           Answers are stored in your brand database and reused by Ved, Keshav, Kavi and Neer.
         </p>
       </div>
-    </InterviewSplitLayout>
+    </InterviewShell>
   );
 }
