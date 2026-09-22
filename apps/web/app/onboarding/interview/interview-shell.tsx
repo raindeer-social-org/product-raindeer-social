@@ -17,7 +17,7 @@ function BrandMemoryTags({ tags }: { tags: string[] }) {
   const hiddenCount = tags.length - visible.length;
 
   return (
-    <div className="mt-7 flex w-full max-w-[280px] flex-col items-center gap-2">
+    <div className="mt-5 flex w-full max-w-[280px] flex-col items-center gap-2 lg:mt-7">
       <span className="text-[10px] font-bold uppercase tracking-[.14em] text-ink-300">Aarav is learning</span>
       <div className="flex flex-wrap items-center justify-center gap-1.5">
         {hiddenCount > 0 ? (
@@ -46,12 +46,17 @@ function BrandMemoryTags({ tags }: { tags: string[] }) {
 }
 
 // The interview's shell — follows the user's own wireframe
-// (Images/aarav UI.png) exactly: the outer page itself never scrolls
-// ("No Scroll" on the whole screen); the question content on the left
-// scrolls independently in its own panel ("scrollable"); Aarav's live
-// companion sits fixed in a panel on the right ("no-scroll" on the robot
-// side) so it's always in view and never moves off-screen while a long
-// page of questions scrolls past.
+// (Images/aarav UI.png) on large screens: the outer page itself never
+// scrolls, the question content scrolls independently on the left, and
+// Aarav's companion sits fixed in a panel on the right so it's always in
+// view. Below the `lg` breakpoint this used to just `hidden` the entire
+// companion panel — a real bug, not a deliberate mobile design: on any
+// narrower window (a non-maximized laptop browser, a real phone) the whole
+// mascot/gradient/Brand-Memory experience silently vanished and what was
+// left was indistinguishable from the plain form this redesign replaced.
+// Recomposed instead of hidden: a compact companion bar sits above the
+// content and the whole page scrolls normally, matching how a real mobile
+// onboarding flow should behave.
 export function InterviewShell({
   mood,
   caption,
@@ -69,9 +74,31 @@ export function InterviewShell({
   children: ReactNode;
 }) {
   return (
-    <div className="grid h-screen grid-cols-1 overflow-hidden bg-[#F4F6FE] lg:grid-cols-[minmax(0,1fr)_400px]">
-      {/* left: scrollable question content */}
-      <div className="flex min-w-0 flex-col overflow-y-auto px-6 py-9 sm:px-11">
+    <div className="flex min-h-screen flex-col bg-[#F4F6FE] lg:grid lg:h-screen lg:grid-cols-[minmax(0,1fr)_400px] lg:overflow-hidden">
+      {/* companion panel — a compact bar above the content below `lg`,
+      a fixed no-scroll side column at `lg` and up */}
+      <div className="relative order-first flex shrink-0 flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-[#EEF2FF] via-[#F3EEFF] to-[#E9F3FF] px-6 py-7 lg:order-last lg:h-full lg:py-0">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -right-24 -top-24 h-[380px] w-[380px] rounded-full opacity-60 blur-[90px]"
+          style={{ background: "radial-gradient(circle, rgba(107,50,201,.3), transparent 65%)" }}
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -bottom-28 -left-16 h-[380px] w-[380px] rounded-full opacity-50 blur-[90px]"
+          style={{ background: "radial-gradient(circle, rgba(27,77,255,.32), transparent 65%)" }}
+        />
+        <div className="relative flex flex-col items-center">
+          <div className="scale-[0.82] lg:scale-100">
+            <AaravCompanion mood={mood} caption={caption} size="lg" dark={false} />
+          </div>
+          <BrandMemoryTags tags={memoryTags} />
+        </div>
+      </div>
+
+      {/* content — scrolls with the page below `lg`, scrolls independently
+      in its own panel at `lg` and up */}
+      <div className="flex min-w-0 flex-1 flex-col px-6 py-9 sm:px-11 lg:overflow-y-auto">
         <div className="mb-6 flex items-center gap-2.5">
           <div className="flex h-[30px] w-[30px] items-center justify-center rounded-[9px] bg-gradient-to-br from-brand-600 to-brand-300 text-sm font-extrabold text-white shadow-glow">
             R
@@ -93,24 +120,6 @@ export function InterviewShell({
           </span>
           {children}
         </motion.div>
-      </div>
-
-      {/* right: fixed, no-scroll companion panel — always in view */}
-      <div className="relative hidden overflow-hidden bg-gradient-to-br from-[#EEF2FF] via-[#F3EEFF] to-[#E9F3FF] lg:flex lg:flex-col lg:items-center lg:justify-center">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -right-24 -top-24 h-[380px] w-[380px] rounded-full opacity-60 blur-[90px]"
-          style={{ background: "radial-gradient(circle, rgba(107,50,201,.3), transparent 65%)" }}
-        />
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -bottom-28 -left-16 h-[380px] w-[380px] rounded-full opacity-50 blur-[90px]"
-          style={{ background: "radial-gradient(circle, rgba(27,77,255,.32), transparent 65%)" }}
-        />
-        <div className="relative flex flex-col items-center">
-          <AaravCompanion mood={mood} caption={caption} size="lg" dark={false} />
-          <BrandMemoryTags tags={memoryTags} />
-        </div>
       </div>
     </div>
   );
